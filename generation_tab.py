@@ -439,6 +439,7 @@ class GenerationTab(QWidget):
         calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.SingleSelection)
         calendar_widget.setSelectedDate(QDate(year, month, 1))
         add_button = QPushButton("選択した日付を追加 →")
+        clear_button = QPushButton("選択の全解除")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
@@ -448,7 +449,12 @@ class GenerationTab(QWidget):
         button_box.addWidget(cancel_button)
         calendar_layout = QHBoxLayout()
         calendar_layout.addWidget(calendar_widget)
-        calendar_layout.addWidget(add_button)
+        # ボタンを縦に配置（追加/全解除）
+        button_col = QVBoxLayout()
+        button_col.addWidget(add_button)
+        button_col.addWidget(clear_button)
+        button_col.addStretch()
+        calendar_layout.addLayout(button_col)
         calendar_layout.addWidget(temp_list)
         layout.addLayout(calendar_layout)
         layout.addLayout(button_box)
@@ -477,6 +483,18 @@ class GenerationTab(QWidget):
                 fmt = QTextCharFormat(); fmt.setBackground(QColor('#CCE5FF')); fmt.setFontWeight(75)
                 calendar_widget.setDateTextFormat(qdate, fmt)
         calendar_widget.clicked.connect(toggle_date)
+        def clear_selection():
+            nonlocal selected_set
+            for dstr in list(selected_set):
+                try:
+                    y, m, d = [int(x) for x in dstr.split('-')]
+                    qd = QDate(y, m, d)
+                    fmt = QTextCharFormat()
+                    calendar_widget.setDateTextFormat(qd, fmt)
+                except Exception:
+                    pass
+            selected_set.clear()
+        clear_button.clicked.connect(clear_selection)
         def add_date_to_list():
             # 現在ハイライト中の選択集合をまとめて右側リストへ反映
             changed = False
@@ -531,6 +549,7 @@ class GenerationTab(QWidget):
         calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.SingleSelection)
         calendar_widget.setSelectedDate(QDate(year, month, 1))
         add_button = QPushButton("選択した日付を追加 →")
+        clear_button = QPushButton("選択の全解除")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
@@ -540,7 +559,11 @@ class GenerationTab(QWidget):
         button_box.addWidget(cancel_button)
         calendar_layout = QHBoxLayout()
         calendar_layout.addWidget(calendar_widget)
-        calendar_layout.addWidget(add_button)
+        button_col = QVBoxLayout()
+        button_col.addWidget(add_button)
+        button_col.addWidget(clear_button)
+        button_col.addStretch()
+        calendar_layout.addLayout(button_col)
         calendar_layout.addWidget(temp_list)
         layout.addLayout(calendar_layout)
         layout.addLayout(button_box)
@@ -568,6 +591,18 @@ class GenerationTab(QWidget):
                 fmt = QTextCharFormat(); fmt.setBackground(QColor('#FFE8CC')); fmt.setFontWeight(75)
                 calendar_widget.setDateTextFormat(qdate, fmt)
         calendar_widget.clicked.connect(toggle_date_noshift)
+        def clear_selection_noshift():
+            nonlocal selected_set
+            for dstr in list(selected_set):
+                try:
+                    y, m, d = [int(x) for x in dstr.split('-')]
+                    qd = QDate(y, m, d)
+                    fmt = QTextCharFormat()
+                    calendar_widget.setDateTextFormat(qd, fmt)
+                except Exception:
+                    pass
+            selected_set.clear()
+        clear_button.clicked.connect(clear_selection_noshift)
         def add_date_to_list():
             changed = False
             for selected_date_str in sorted(selected_set):
@@ -618,6 +653,7 @@ class GenerationTab(QWidget):
         calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.SingleSelection)
         calendar_widget.setSelectedDate(QDate(year, month, 1))
         add_button = QPushButton("選択した日付を追加 →")
+        clear_button = QPushButton("選択の全解除")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
@@ -627,7 +663,11 @@ class GenerationTab(QWidget):
         button_box.addWidget(cancel_button)
         calendar_layout = QHBoxLayout()
         calendar_layout.addWidget(calendar_widget)
-        calendar_layout.addWidget(add_button)
+        button_col = QVBoxLayout()
+        button_col.addWidget(add_button)
+        button_col.addWidget(clear_button)
+        button_col.addStretch()
+        calendar_layout.addLayout(button_col)
         calendar_layout.addWidget(temp_list)
         layout.addLayout(calendar_layout)
         layout.addLayout(button_box)
@@ -657,6 +697,17 @@ class GenerationTab(QWidget):
                 fmt = QTextCharFormat(); fmt.setBackground(QColor('#FFD6E7')); fmt.setFontWeight(75)
                 calendar_widget.setDateTextFormat(qdate, fmt)
         calendar_widget.clicked.connect(toggle_date_vac)
+        def clear_selection_vac():
+            nonlocal selected_days
+            for day in list(selected_days):
+                try:
+                    qd = QDate(year, month, day)
+                    fmt = QTextCharFormat()
+                    calendar_widget.setDateTextFormat(qd, fmt)
+                except Exception:
+                    pass
+            selected_days.clear()
+        clear_button.clicked.connect(clear_selection_vac)
         def add_date_to_list():
             # 選択済み（日数）をまとめて反映
             existing = {temp_list.item(i).text() for i in range(temp_list.count())}
