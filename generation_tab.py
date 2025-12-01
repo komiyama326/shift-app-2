@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QProgressDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QCheckBox, QListWidget, QDialog,
     QCalendarWidget, QTabWidget, QStyledItemDelegate, QStyleOptionViewItem,
-    QRadioButton, QDialogButtonBox # ★ 新しくインポート
+    QRadioButton, QDialogButtonBox, QLineEdit # ★ 追加: QLineEdit を使用
 )
 from PySide6.QtCore import Qt, QDate, QThread, Signal, QRect, QPoint, QModelIndex
 from PySide6.QtGui import QColor, QPainter, QBrush, QTextCharFormat
