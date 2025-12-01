@@ -440,6 +440,7 @@ class GenerationTab(QWidget):
         calendar_widget.setSelectedDate(QDate(year, month, 1))
         add_button = QPushButton("選択した日付を追加 →")
         clear_button = QPushButton("選択の全解除")
+        clear_list_button = QPushButton("右リストを全クリア")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
@@ -453,6 +454,7 @@ class GenerationTab(QWidget):
         button_col = QVBoxLayout()
         button_col.addWidget(add_button)
         button_col.addWidget(clear_button)
+        button_col.addWidget(clear_list_button)
         button_col.addStretch()
         calendar_layout.addLayout(button_col)
         calendar_layout.addWidget(temp_list)
@@ -495,6 +497,9 @@ class GenerationTab(QWidget):
                     pass
             selected_set.clear()
         clear_button.clicked.connect(clear_selection)
+        def clear_right_list():
+            temp_list.clear()
+        clear_list_button.clicked.connect(clear_right_list)
         def add_date_to_list():
             # 現在ハイライト中の選択集合をまとめて右側リストへ反映
             changed = False
@@ -550,6 +555,7 @@ class GenerationTab(QWidget):
         calendar_widget.setSelectedDate(QDate(year, month, 1))
         add_button = QPushButton("選択した日付を追加 →")
         clear_button = QPushButton("選択の全解除")
+        clear_list_button = QPushButton("右リストを全クリア")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
@@ -562,6 +568,7 @@ class GenerationTab(QWidget):
         button_col = QVBoxLayout()
         button_col.addWidget(add_button)
         button_col.addWidget(clear_button)
+        button_col.addWidget(clear_list_button)
         button_col.addStretch()
         calendar_layout.addLayout(button_col)
         calendar_layout.addWidget(temp_list)
@@ -603,6 +610,9 @@ class GenerationTab(QWidget):
                     pass
             selected_set.clear()
         clear_button.clicked.connect(clear_selection_noshift)
+        def clear_right_list_noshift():
+            temp_list.clear()
+        clear_list_button.clicked.connect(clear_right_list_noshift)
         def add_date_to_list():
             changed = False
             for selected_date_str in sorted(selected_set):
@@ -654,6 +664,7 @@ class GenerationTab(QWidget):
         calendar_widget.setSelectedDate(QDate(year, month, 1))
         add_button = QPushButton("選択した日付を追加 →")
         clear_button = QPushButton("選択の全解除")
+        clear_list_button = QPushButton("右リストを全クリア")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
@@ -666,6 +677,7 @@ class GenerationTab(QWidget):
         button_col = QVBoxLayout()
         button_col.addWidget(add_button)
         button_col.addWidget(clear_button)
+        button_col.addWidget(clear_list_button)
         button_col.addStretch()
         calendar_layout.addLayout(button_col)
         calendar_layout.addWidget(temp_list)
@@ -708,6 +720,9 @@ class GenerationTab(QWidget):
                     pass
             selected_days.clear()
         clear_button.clicked.connect(clear_selection_vac)
+        def clear_right_list_vac():
+            temp_list.clear()
+        clear_list_button.clicked.connect(clear_right_list_vac)
         def add_date_to_list():
             # 選択済み（日数）をまとめて反映
             existing = {temp_list.item(i).text() for i in range(temp_list.count())}
