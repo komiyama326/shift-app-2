@@ -1128,10 +1128,13 @@ class GenerationTab(QWidget):
                 i += 1
         
         filepath, _ = QFileDialog.getSaveFileName(self, "Excelファイルを保存", default_path, "Excel Workbook (*.xlsx)")
-        
+
         if not filepath:
             return
-        
+
+        # 上書き防止: 同名が存在する場合は (2), (3)... を付与
+        filepath = self._ensure_unique_path(filepath)
+
         # 保存に成功したら、ディレクトリを記憶する
         self.last_save_directory = os.path.dirname(filepath)
             
@@ -1174,10 +1177,13 @@ class GenerationTab(QWidget):
                     break
                 i += 1
         filepath, _ = QFileDialog.getSaveFileName(self, "PDFファイルを保存", default_path, "PDF Document (*.pdf)")
-        
+
         if not filepath:
             return
-        
+
+        # 上書き防止: 同名が存在する場合は (2), (3)... を付与
+        filepath = self._ensure_unique_path(filepath)
+
         self.last_save_directory = os.path.dirname(filepath)
             
         success, error_msg = export_to_pdf(
@@ -1197,6 +1203,21 @@ class GenerationTab(QWidget):
                 QMessageBox.warning(self, "ファイルオープンエラー", f"ファイルを開けませんでした:\n{e}")
         else:
             QMessageBox.critical(self, "PDF出力エラー", f"PDFファイルの出力中にエラーが発生しました:\n{error_msg}")
+
+    def _ensure_unique_path(self, path: str) -> str:
+        """指定パスが既存なら ' (2)', ' (3)' を拡張子前に付与して重複回避する。"""
+        try:
+            base, ext = os.path.splitext(path)
+            if not os.path.exists(path):
+                return path
+            i = 2
+            while True:
+                candidate = f"{base} ({i}){ext}"
+                if not os.path.exists(candidate):
+                    return candidate
+                i += 1
+        except Exception:
+            return path
 
     def set_output_dir_provider(self, provider):
         """Basic settings tab (GeneralSettingsTab) を渡すためのフック。"""
