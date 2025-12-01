@@ -150,6 +150,11 @@ class GeneralSettingsTab(QWidget):
             "ただし、他に担当できる人がいないなど、シフト作成が困難な場合はこの限りではありません。"
         )
         fairness_layout.addWidget(self.disperse_duties_checkbox)
+        # 公平性（特別日）のハード/ソフト切替とフォールバック
+        self.fairness_as_hard_checkbox = QCheckBox("特別日公平性をハード制約として強制する")
+        self.fallback_soft_checkbox = QCheckBox("ハードで解なしの場合、ソフトに緩和して再実行")
+        fairness_layout.addWidget(self.fairness_as_hard_checkbox)
+        fairness_layout.addWidget(self.fallback_soft_checkbox)
         
         #self.avoid_consecutive_weekday_checkbox = QCheckBox("同じ曜日の連続担当を避ける（上記でチェックした曜日のみ）")
         #self.avoid_consecutive_weekday_checkbox.setToolTip("チェックを入れると、例えば「先週の土曜担当」と「今週の土曜担当」が同じスタッフになるのを防ぎます。")
@@ -183,6 +188,8 @@ class GeneralSettingsTab(QWidget):
         for checkbox in self.fairness_checkboxes.values():
             checkbox.blockSignals(True)
         self.disperse_duties_checkbox.blockSignals(True) # ★追加
+        self.fairness_as_hard_checkbox.blockSignals(True)
+        self.fallback_soft_checkbox.blockSignals(True)
         #self.avoid_consecutive_weekday_checkbox.blockSignals(True)
 
     def _connect_signals(self):
@@ -202,6 +209,8 @@ class GeneralSettingsTab(QWidget):
         for checkbox in self.fairness_checkboxes.values():
             checkbox.stateChanged.connect(self._update_fairness_group)
         self.disperse_duties_checkbox.stateChanged.connect(lambda state: setattr(self.settings_manager, 'disperse_duties', state == Qt.CheckState.Checked.value)) # ★追加
+        self.fairness_as_hard_checkbox.stateChanged.connect(lambda state: setattr(self.settings_manager, 'fairness_as_hard', state == Qt.CheckState.Checked.value))
+        self.fallback_soft_checkbox.stateChanged.connect(lambda state: setattr(self.settings_manager, 'fallback_soft_on_infeasible', state == Qt.CheckState.Checked.value))
         #self.avoid_consecutive_weekday_checkbox.stateChanged.connect(lambda state: setattr(self.settings_manager, 'avoid_consecutive_same_weekday', state == Qt.CheckState.Checked.value))
         
         self.min_interval_spinbox.blockSignals(False)
@@ -220,6 +229,8 @@ class GeneralSettingsTab(QWidget):
         for checkbox in self.fairness_checkboxes.values():
             checkbox.blockSignals(False)
         self.disperse_duties_checkbox.blockSignals(False) # ★追加
+        self.fairness_as_hard_checkbox.blockSignals(False)
+        self.fallback_soft_checkbox.blockSignals(False)
         #self.avoid_consecutive_weekday_checkbox.blockSignals(False)
 
     def _update_shifts_per_day_mode(self):
@@ -307,6 +318,8 @@ class GeneralSettingsTab(QWidget):
             checkbox.setChecked(day in self.settings_manager.fairness_group)
 
         self.disperse_duties_checkbox.setChecked(self.settings_manager.disperse_duties) # ★追加
+        self.fairness_as_hard_checkbox.setChecked(getattr(self.settings_manager, 'fairness_as_hard', True))
+        self.fallback_soft_checkbox.setChecked(getattr(self.settings_manager, 'fallback_soft_on_infeasible', True))
 
         #self.avoid_consecutive_weekday_checkbox.setChecked(self.settings_manager.avoid_consecutive_same_weekday)
 

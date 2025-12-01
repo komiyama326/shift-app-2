@@ -161,6 +161,8 @@ class GenerationWorker(QThread):
                 max_consecutive_days=self.settings_manager.max_consecutive_days,
                 max_solutions=self.settings_manager.max_solutions,
                 fairness_tolerance=self.settings_manager.fairness_tolerance,
+                fairness_as_hard=getattr(self.settings_manager, 'fairness_as_hard', True),
+                fallback_soft_on_infeasible=getattr(self.settings_manager, 'fallback_soft_on_infeasible', True),
                 last_month_end_dates=self.last_month_end_dates,
                 prev_month_consecutive_days=self.prev_month_consecutive_days,
                 last_week_assignments=self.last_week_assignments,
@@ -994,7 +996,17 @@ class GenerationTab(QWidget):
             return
         self.solutions = solutions
         if solutions:
-            QMessageBox.information(self, "成功", f"{len(solutions)}件のシフトパターンが見つかりました！")
+            # フェールセーフ注記の提示（先頭解にメモを付ける）
+            note = None
+            try:
+                if isinstance(solutions, list) and solutions and isinstance(solutions[0], dict):
+                    note = solutions[0].get('generation_note')
+            except Exception:
+                pass
+            msg = f"{len(solutions)}件のシフトパターンが見つかりました！"
+            if note:
+                msg += f"\n\n注記: {note}"
+            QMessageBox.information(self, "成功", msg)
             self._update_solutions_table()
         else:
             QMessageBox.warning(self, "結果なし", "条件を満たすシフトパターンが見つかりませんでした。")

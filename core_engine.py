@@ -102,7 +102,7 @@ class ShiftScheduler:
         self.constraint_tags: Dict[int, str] = {}
 
     def solve(self,
-              shifts_per_day: int | dict = 1,
+               shifts_per_day: int | dict = 1,
               min_interval: int = 2,
               max_consecutive_days: int = 5,
               max_solutions: int = 1,
@@ -120,15 +120,18 @@ class ShiftScheduler:
               fairness_adjustments: dict | None = None,
               fairness_tolerance: int = 1,
               disperse_duties: bool = True,
-              past_schedules: dict | None = None,
-              **kwargs
-              ) -> List[dict] | str:
+               past_schedules: dict | None = None,
+               fairness_as_hard: bool = True,
+               fallback_soft_on_infeasible: bool = True,
+               **kwargs
+               ) -> List[dict] | str:
 
         staff_list = self.all_staff
         if not staff_list:
             return []
 
         self.past_schedules = past_schedules or {}
+        self._fairness_as_hard = fairness_as_hard
         # Collect solutions to allow duplicate-prevention and final return
         found_solutions: List[dict] = []
         for _ in range(max_solutions):
@@ -173,7 +176,35 @@ class ShiftScheduler:
                 found_solutions.append(solution)
             else:
                 if status == cp_model.INFEASIBLE:
-                    # ORIGINE 相当: 不充足の原因推定レポートを返す
+                    # 公平性がハードかつフォールバック許可時は、ソフトにして再実行
+                    if fallback_soft_on_infeasible and fairness_as_hard and (fairness_group or set()):
+                        alt = self.solve(
+                            shifts_per_day=shifts_per_day,
+                            min_interval=min_interval,
+                            max_consecutive_days=max_consecutive_days,
+                            max_solutions=max_solutions,
+                            last_month_end_dates=last_month_end_dates,
+                            prev_month_consecutive_days=prev_month_consecutive_days,
+                            last_week_assignments=last_week_assignments,
+                            avoid_consecutive_same_weekday=avoid_consecutive_same_weekday,
+                            no_shift_dates=no_shift_dates,
+                            manual_fixed_shifts=manual_fixed_shifts,
+                            rule_based_fixed_shifts=rule_based_fixed_shifts,
+                            vacations=vacations,
+                            rule_based_vacations=rule_based_vacations,
+                            fairness_group=fairness_group,
+                            total_adjustments=total_adjustments,
+                            fairness_adjustments=fairness_adjustments,
+                            fairness_tolerance=fairness_tolerance,
+                            disperse_duties=disperse_duties,
+                            past_schedules=self.past_schedules,
+                            fairness_as_hard=False,
+                            fallback_soft_on_infeasible=False
+                        )
+                        if isinstance(alt, list) and alt:
+                            for sdict in alt:
+                                sdict['generation_note'] = '公平性（特別日）をソフトに緩和して生成'
+                            return alt
                     try:
                         return self._analyze_infeasibility(solver)
                     except Exception:
@@ -445,8 +476,10 @@ class ShiftScheduler:
                                 fixed_shift_penalty, dispersion_penalty):
         num_staff = len(staff_list)
         num_days = len(day_list)
+        fairness_penalty = model.NewIntVar(0, 1000000, 'fairness_penalty')
+        model.Add(fairness_penalty == 0)
         total_penalty = model.NewIntVar(0, 1000000, 'total_penalty')
-        model.Add(total_penalty == fixed_shift_penalty + dispersion_penalty)
+        model.Add(total_penalty == fixed_shift_penalty + dispersion_penalty + fairness_penalty)
         if num_staff > 1:
             total_shifts = [model.NewIntVar(0, num_days, f'total_s{s}') for s in range(num_staff)]
             adj_total = [model.NewIntVar(-num_days, num_days, f'adj_total_s{s}') for s in range(num_staff)]
@@ -461,7 +494,7 @@ class ShiftScheduler:
             total_diff = model.NewIntVar(0, num_days, 'total_diff')
             model.Add(total_diff == max_total - min_total)
 
-            # ORIGINE 相当: 特定曜日/祝日の公平性（fairness_group）をハード制約で担保
+            # 特定曜日/祝日の公平性（hard: 制約 / soft: ペナルティ）
             if fairness_group:
                 special_day_indices = [
                     d for d, day_info in enumerate(day_list)
@@ -485,12 +518,18 @@ class ShiftScheduler:
                     fair_diff = model.NewIntVar(0, num_days, 'fair_diff')
                     model.Add(fair_diff == max_fair - min_fair)
 
-                    c2 = model.Add(fair_diff <= fairness_tolerance)
-                    # 任意: 解析用タグ
-                    try:
-                        self.constraint_tags[c2.Index()] = f"特別日回数の公平性 (許容差: {fairness_tolerance}回)"
-                    except Exception:
-                        pass
+                    if self._fairness_as_hard:
+                        c2 = model.Add(fair_diff <= fairness_tolerance)
+                        try:
+                            self.constraint_tags[c2.Index()] = f"特別日回数の公平性 (許容差: {fairness_tolerance}回)"
+                        except Exception:
+                            pass
+                    else:
+                        t = model.NewIntVar(-num_days, num_days, 'fair_over_tmp')
+                        model.Add(t == fair_diff - fairness_tolerance)
+                        over = model.NewIntVar(0, num_days, 'fair_over')
+                        model.AddMaxEquality(over, [t, 0])
+                        model.Add(fairness_penalty == over)
 
             # 目的関数: 総回数差 + 既存ペナルティ（固定/分散）を最小化
             model.Minimize(total_diff + total_penalty)
@@ -672,6 +711,9 @@ class SettingsManager:
         self.excel_title: str = "シフト表"
         self.history_dir = history_dir
         os.makedirs(self.history_dir, exist_ok=True)
+        # 新規追加: 公平性のハード/ソフト切替とフォールバック
+        self.fairness_as_hard: bool = True
+        self.fallback_soft_on_infeasible: bool = True
 
     def to_dict(self) -> dict:
         staff_list_dict = [{
@@ -695,6 +737,8 @@ class SettingsManager:
             "max_solutions": self.max_solutions,
             "fairness_tolerance": self.fairness_tolerance,
             "excel_title": self.excel_title,
+            "fairness_as_hard": self.fairness_as_hard,
+            "fallback_soft_on_infeasible": self.fallback_soft_on_infeasible,
         }
         return {"staff": staff_list_dict,
                 "rule_based_fixed_shifts": rules_fixed_dict,
@@ -728,6 +772,8 @@ class SettingsManager:
         settings.max_solutions = general.get("max_solutions", 1)
         settings.fairness_tolerance = general.get("fairness_tolerance", 1)
         settings.excel_title = general.get("excel_title", "シフト表")
+        settings.fairness_as_hard = general.get("fairness_as_hard", True)
+        settings.fallback_soft_on_infeasible = general.get("fallback_soft_on_infeasible", True)
         return settings
 
     def save_to_file(self, path: str) -> bool:
