@@ -1104,9 +1104,18 @@ class GenerationTab(QWidget):
 
     def _export_excel(self, year, month, selected_row, schedule_data, layout_type):
         # ★★★★★ 変更点 5: 保存ダイアログのパス設定を修正 ★★★★★
-        default_filename = f"shift_{year}_{month:02d}_{layout_type}_pattern{selected_row+1}.xlsx"
-        # 保存ディレクトリとファイル名を結合してデフォルトパスを作成
-        default_path = os.path.join(self.last_save_directory, default_filename)
+        # シンプルな既定名に変更し、同名があれば (2), (3), ... を付与
+        base_name = f"{year}_{month:02d}"
+        ext = ".xlsx"
+        default_path = os.path.join(self.last_save_directory, base_name + ext)
+        if os.path.exists(default_path):
+            i = 2
+            while True:
+                candidate = os.path.join(self.last_save_directory, f"{base_name} ({i}){ext}")
+                if not os.path.exists(candidate):
+                    default_path = candidate
+                    break
+                i += 1
         
         filepath, _ = QFileDialog.getSaveFileName(self, "Excelファイルを保存", default_path, "Excel Workbook (*.xlsx)")
         
@@ -1135,8 +1144,17 @@ class GenerationTab(QWidget):
             QMessageBox.critical(self, "Excel出力エラー", f"Excelファイルの出力中にエラーが発生しました:\n{error_msg}")
 
     def _export_pdf(self, year, month, selected_row, schedule_data, layout_type):
-        default_filename = f"shift_{year}_{month:02d}_{layout_type}_pattern{selected_row+1}.pdf"
-        default_path = os.path.join(self.last_save_directory, default_filename)
+        base_name = f"{year}_{month:02d}"
+        ext = ".pdf"
+        default_path = os.path.join(self.last_save_directory, base_name + ext)
+        if os.path.exists(default_path):
+            i = 2
+            while True:
+                candidate = os.path.join(self.last_save_directory, f"{base_name} ({i}){ext}")
+                if not os.path.exists(candidate):
+                    default_path = candidate
+                    break
+                i += 1
         filepath, _ = QFileDialog.getSaveFileName(self, "PDFファイルを保存", default_path, "PDF Document (*.pdf)")
         
         if not filepath:
