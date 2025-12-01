@@ -1,8 +1,9 @@
 import sys
+import os
 from functools import partial
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QHBoxLayout, QGridLayout,
-    QSpinBox, QGroupBox, QLabel, QCheckBox, QLineEdit, QFrame, QSpacerItem, QSizePolicy
+    QSpinBox, QGroupBox, QLabel, QCheckBox, QLineEdit, QFrame, QSpacerItem, QSizePolicy, QFileDialog, QPushButton
 )
 from PySide6.QtCore import Qt
 from core_engine import SettingsManager, weekdays_jp
@@ -38,6 +39,22 @@ class GeneralSettingsTab(QWidget):
         self.excel_title_input = QLineEdit()
         self.excel_title_input.setPlaceholderText("例: 日直・当直予定表")
         output_form_layout.addRow("Excel出力用タイトル:", self.excel_title_input)
+        # 出力先フォルダ
+        self.output_dir_edit = QLineEdit()
+        self.output_dir_edit.setPlaceholderText(os.path.expanduser("~"))
+        browse_btn = QPushButton("参照...")
+        def _browse_output_dir():
+            current = self.output_dir_edit.text().strip() or os.path.expanduser("~")
+            dirpath = QFileDialog.getExistingDirectory(self, "出力先フォルダを選択", current)
+            if dirpath:
+                self.output_dir_edit.setText(dirpath)
+        browse_btn.clicked.connect(_browse_output_dir)
+        row = QHBoxLayout()
+        row.addWidget(self.output_dir_edit)
+        row.addWidget(browse_btn)
+        roww = QWidget()
+        roww.setLayout(row)
+        output_form_layout.addRow("出力先フォルダ:", roww)
         
         shifts_per_day_group = QGroupBox("曜日・祝日ごとの担当人数（範囲指定）")
         shifts_per_day_layout = QVBoxLayout(shifts_per_day_group)
@@ -154,6 +171,7 @@ class GeneralSettingsTab(QWidget):
         self.max_consecutive_days_spinbox.blockSignals(True)
         self.ignore_rules_on_holidays_checkbox.blockSignals(True)
         self.excel_title_input.blockSignals(True)
+        self.output_dir_edit.blockSignals(True)
         self.max_solutions_spinbox.blockSignals(True)
         self.fairness_tolerance_spinbox.blockSignals(True)
         self.common_shifts_checkbox.blockSignals(True)
@@ -172,6 +190,7 @@ class GeneralSettingsTab(QWidget):
         self.max_consecutive_days_spinbox.valueChanged.connect(lambda val: setattr(self.settings_manager, 'max_consecutive_days', val))
         self.ignore_rules_on_holidays_checkbox.stateChanged.connect(lambda state: setattr(self.settings_manager, 'ignore_rules_on_holidays', state == Qt.CheckState.Checked.value))
         self.excel_title_input.textChanged.connect(lambda text: setattr(self.settings_manager, 'excel_title', text))
+        # 出力先フォルダは SettingsManager ではなく MainWindow で保持/保存するため、ここでは編集のみ
         self.max_solutions_spinbox.valueChanged.connect(lambda val: setattr(self.settings_manager, 'max_solutions', val))
         self.fairness_tolerance_spinbox.valueChanged.connect(lambda val: setattr(self.settings_manager, 'fairness_tolerance', val))
         self.common_shifts_checkbox.stateChanged.connect(self._update_shifts_per_day_mode)
@@ -189,6 +208,7 @@ class GeneralSettingsTab(QWidget):
         self.max_consecutive_days_spinbox.blockSignals(False)
         self.ignore_rules_on_holidays_checkbox.blockSignals(False)
         self.excel_title_input.blockSignals(False)
+        self.output_dir_edit.blockSignals(False)
         self.max_solutions_spinbox.blockSignals(False)
         self.fairness_tolerance_spinbox.blockSignals(False)
         self.common_shifts_checkbox.blockSignals(False)
@@ -252,6 +272,7 @@ class GeneralSettingsTab(QWidget):
         self.max_consecutive_days_spinbox.setValue(self.settings_manager.max_consecutive_days)
         self.ignore_rules_on_holidays_checkbox.setChecked(self.settings_manager.ignore_rules_on_holidays)
         self.excel_title_input.setText(self.settings_manager.excel_title)
+        # 出力先フォルダ: 初期値は外部から set_output_directory で注入される想定
         
         shifts_setting = self.settings_manager.shifts_per_day
         if isinstance(shifts_setting, int) or (isinstance(shifts_setting, dict) and 'min' not in shifts_setting.get(weekdays_jp[0], {})):
@@ -294,3 +315,10 @@ class GeneralSettingsTab(QWidget):
     def set_settings_manager(self, settings_manager: SettingsManager):
         self.settings_manager = settings_manager
         self.load_settings()
+
+    # 出力先フォルダを MainWindow から同期するためのAPI
+    def set_output_directory(self, path: str):
+        self.output_dir_edit.setText(path or os.path.expanduser("~"))
+
+    def get_output_directory(self) -> str:
+        return (self.output_dir_edit.text().strip() or os.path.expanduser("~"))

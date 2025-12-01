@@ -179,8 +179,12 @@ class MainWindow(QMainWindow):
                 last_dir = config.get("last_save_directory")
                 if last_dir and os.path.isdir(last_dir):
                     self.last_save_directory = last_dir
-                # GenerationTab にパスを渡す
+                # GenerationTab / GeneralSettingsTab にパスを渡す
                 self.generation_tab.last_save_directory = self.last_save_directory
+                try:
+                    self.general_settings_tab.set_output_directory(self.last_save_directory)
+                except Exception:
+                    pass
                 
                 last_file = config.get("last_opened_file")
                 if last_file and os.path.exists(last_file):
@@ -200,8 +204,14 @@ class MainWindow(QMainWindow):
             os.makedirs(app_config_dir)
 
         # ★★★★★ 変更点 3: 保存場所のパスを保存する ★★★★★
-        # GenerationTabから最新のパスを取得
-        self.last_save_directory = self.generation_tab.last_save_directory
+        # GeneralSettingsTab の出力先設定を優先して取得
+        try:
+            self.last_save_directory = self.general_settings_tab.get_output_directory()
+            # GenerationTab 側にも反映
+            self.generation_tab.last_save_directory = self.last_save_directory
+        except Exception:
+            # 互換: 取得できない場合は GenerationTab から
+            self.last_save_directory = self.generation_tab.last_save_directory
         config = {
             "last_opened_file": self.current_filepath,
             "last_save_directory": self.last_save_directory
