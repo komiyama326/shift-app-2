@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self.rule_tab = RuleConfigTab(self.settings_manager)
         self.general_settings_tab = GeneralSettingsTab(self.settings_manager)
         self.generation_tab = GenerationTab(self.settings_manager)
+        self.generation_tab.set_output_dir_provider(self.general_settings_tab)
 
         self.tabs.addTab(self.staff_tab, "スタッフ設定")
         self.tabs.addTab(self.rule_tab, "ルール設定")

@@ -1105,15 +1105,23 @@ class GenerationTab(QWidget):
             # QMessageBox.information(self, "未実装", "PDF出力機能は現在開発中です。")
 
     def _export_excel(self, year, month, selected_row, schedule_data, layout_type):
-        # ★★★★★ 変更点 5: 保存ダイアログのパス設定を修正 ★★★★★
+        # GeneralSettingsTab 側の出力先フォルダを優先的に使用
+        base_dir = self.last_save_directory
+        try:
+            if hasattr(self, 'output_dir_provider') and self.output_dir_provider is not None:
+                base_dir = self.output_dir_provider.get_output_directory() or base_dir
+        except Exception:
+            pass
+        self.last_save_directory = base_dir
+
         # シンプルな既定名に変更し、同名があれば (2), (3), ... を付与
         base_name = f"{year}_{month:02d}"
         ext = ".xlsx"
-        default_path = os.path.join(self.last_save_directory, base_name + ext)
+        default_path = os.path.join(base_dir, base_name + ext)
         if os.path.exists(default_path):
             i = 2
             while True:
-                candidate = os.path.join(self.last_save_directory, f"{base_name} ({i}){ext}")
+                candidate = os.path.join(base_dir, f"{base_name} ({i}){ext}")
                 if not os.path.exists(candidate):
                     default_path = candidate
                     break
@@ -1146,13 +1154,21 @@ class GenerationTab(QWidget):
             QMessageBox.critical(self, "Excel出力エラー", f"Excelファイルの出力中にエラーが発生しました:\n{error_msg}")
 
     def _export_pdf(self, year, month, selected_row, schedule_data, layout_type):
+        base_dir = self.last_save_directory
+        try:
+            if hasattr(self, 'output_dir_provider') and self.output_dir_provider is not None:
+                base_dir = self.output_dir_provider.get_output_directory() or base_dir
+        except Exception:
+            pass
+        self.last_save_directory = base_dir
+
         base_name = f"{year}_{month:02d}"
         ext = ".pdf"
-        default_path = os.path.join(self.last_save_directory, base_name + ext)
+        default_path = os.path.join(base_dir, base_name + ext)
         if os.path.exists(default_path):
             i = 2
             while True:
-                candidate = os.path.join(self.last_save_directory, f"{base_name} ({i}){ext}")
+                candidate = os.path.join(base_dir, f"{base_name} ({i}){ext}")
                 if not os.path.exists(candidate):
                     default_path = candidate
                     break
@@ -1181,3 +1197,7 @@ class GenerationTab(QWidget):
                 QMessageBox.warning(self, "ファイルオープンエラー", f"ファイルを開けませんでした:\n{e}")
         else:
             QMessageBox.critical(self, "PDF出力エラー", f"PDFファイルの出力中にエラーが発生しました:\n{error_msg}")
+
+    def set_output_dir_provider(self, provider):
+        """Basic settings tab (GeneralSettingsTab) を渡すためのフック。"""
+        self.output_dir_provider = provider
