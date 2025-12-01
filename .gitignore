@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+
+# IDE/editor
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build/packaging
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+
+# App history/output caches
+shift_history/
+
+# PyInstaller/Spec artifacts (keep .spec if tracked explicitly)
+*.spec

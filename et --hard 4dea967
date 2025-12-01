@@ -1,0 +1,17 @@
+[33m4dea967[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;32mbackup-before-reset[m[33m)[m HEAD@{0}: commit: デザイン調整: Excel出力のフォントサイズと色を変更
+[33mbec5ffe[m HEAD@{1}: commit: アイコン画像
+[33m9bca379[m HEAD@{2}: commit: step26完成　PDF版グリッドカレンダーのデザイン
+[33m9a551dd[m HEAD@{3}: commit: 微調整　history更新のアラート機能
+[33m24f350f[m HEAD@{4}: commit: step26 カレンダー出力先の保存
+[33mea6ce69[m HEAD@{5}: commit: step26途中　エクセル、PDF出力
+[33m64fbbb3[m HEAD@{6}: commit: roadmap更新　step26カレンダー詳細
+[33m3727559[m HEAD@{7}: pull --tags origin main: Fast-forward
+[33m37d8b95[m HEAD@{8}: commit: roadmap更新　step26,26.5
+[33m849298c[m HEAD@{9}: commit: step26.5 特定曜日の連続担当回避オプション
+[33mf74285b[m HEAD@{10}: commit: step26 各日１人のカレンダー完成
+[33m5bcec57[m HEAD@{11}: commit (merge): Merge branch 'main' of https://github.com/komiyama326/shift-app
+[33m250e61a[m HEAD@{12}: commit: Add .gitignore and stop tracking .venv
+[33m2f87f27[m HEAD@{13}: commit: openpyxl 追加
+[33mcb70e0a[m HEAD@{14}: commit: UIの微調整
+[33mf93fdea[m HEAD@{15}: pull --tags origin main: Fast-forward
+[33md103384[m HEAD@{16}: clone: from https://github.com/komiyama326/shift-app.git

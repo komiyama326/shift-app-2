@@ -1,0 +1,86 @@
+{
+    "staff": [
+        {
+            "name": "星",
+            "color_code": "#452fea",
+            "is_active": true,
+            "impossible_weekdays": [
+                "火"
+            ],
+            "rule_based_impossible_days": []
+        },
+        {
+            "name": "小泉",
+            "color_code": "#52e232",
+            "is_active": true,
+            "impossible_weekdays": [
+                "土"
+            ],
+            "rule_based_impossible_days": []
+        },
+        {
+            "name": "飯渕",
+            "color_code": "#e36222",
+            "is_active": true,
+            "impossible_weekdays": [
+                "月"
+            ],
+            "rule_based_impossible_days": []
+        },
+        {
+            "name": "小宮山",
+            "color_code": "#dfeabc",
+            "is_active": true,
+            "impossible_weekdays": [
+                "木",
+                "水"
+            ],
+            "rule_based_impossible_days": []
+        },
+        {
+            "name": "下野",
+            "color_code": "#f6c2ff",
+            "is_active": true,
+            "impossible_weekdays": [
+                "水"
+            ],
+            "rule_based_impossible_days": []
+        },
+        {
+            "name": "梅田",
+            "color_code": "#ffdea9",
+            "is_active": true,
+            "impossible_weekdays": [
+                "水"
+            ],
+            "rule_based_impossible_days": []
+        },
+        {
+            "name": "小野",
+            "color_code": "#edff46",
+            "is_active": true,
+            "impossible_weekdays": [],
+            "rule_based_impossible_days": []
+        }
+    ],
+    "rule_based_fixed_shifts": [],
+    "rule_based_vacations": [],
+    "general_settings": {
+        "min_interval": 4,
+        "max_consecutive_days": 1,
+        "shifts_per_day": {
+            "min": 1,
+            "max": 1
+        },
+        "max_solutions": 10,
+        "fairness_tolerance": 1,
+        "fairness_group": [
+            "祝",
+            "日",
+            "土"
+        ],
+        "ignore_rules_on_holidays": true,
+        "avoid_consecutive_same_weekday": true,
+        "excel_title": "日直・当直予定表"
+    }
+}
