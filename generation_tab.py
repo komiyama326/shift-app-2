@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QProgressDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QCheckBox, QListWidget, QDialog,
     QCalendarWidget, QTabWidget, QStyledItemDelegate, QStyleOptionViewItem,
-    QRadioButton, QDialogButtonBox, QLineEdit # ★ 追加: QLineEdit を使用
+    QRadioButton, QDialogButtonBox, QLineEdit, QPlainTextEdit
 )
 from PySide6.QtCore import Qt, QDate, QThread, Signal, QRect, QPoint, QModelIndex
 from PySide6.QtGui import QColor, QPainter, QBrush, QTextCharFormat
@@ -332,7 +332,9 @@ class GenerationTab(QWidget):
         left_layout.addWidget(options_group)
         self.generate_button = QPushButton("シフトを生成！")
         self.generate_button.setStyleSheet("font-size: 16px; padding: 10px;")
+        self.precheck_button = QPushButton("事前チェック")
         left_layout.addWidget(self.generate_button)
+        left_layout.addWidget(self.precheck_button)
         left_layout.addStretch()
         splitter.addWidget(left_widget)
         right_widget = QWidget()
@@ -449,6 +451,7 @@ class GenerationTab(QWidget):
         # ★★★★★ 新しいシグナル接続 ★★★★★
         self.save_history_button.clicked.connect(self._save_history)
         self.export_file_button.clicked.connect(self._export_file)
+        self.precheck_button.clicked.connect(self._run_precheck)
 
     def update_options_ui(self):
         # ... (変更なし) ...
@@ -1422,3 +1425,127 @@ class GenerationTab(QWidget):
     def set_output_dir_provider(self, provider):
         """Basic settings tab (GeneralSettingsTab) を渡すためのフック。"""
         self.output_dir_provider = provider
+
+    # ===== 事前チェック（レベル1） =====
+    def _collect_monthly_constraints(self):
+        manual_vacations = {}
+        for i in range(self.vacation_list.count()):
+            item_text = self.vacation_list.item(i).text()
+            try:
+                name, dates_part = item_text.split(': ')
+            except ValueError:
+                continue
+            days = set()
+            for d_str in dates_part.split(', '):
+                try:
+                    day_num = int(d_str.replace('日', ''))
+                    y = self.year_spinbox.value()
+                    m = self.month_combo.currentIndex() + 1
+                    days.add(datetime.date(y, m, day_num))
+                except Exception:
+                    continue
+            if days:
+                manual_vacations[name] = days
+
+        manual_fixed_shifts = {}
+        for i in range(self.fixed_shift_list.count()):
+            item_text = self.fixed_shift_list.item(i).text()
+            try:
+                date_str, staff_name = item_text.split(': ')
+                y, m, d = [int(x) for x in date_str.split('-')]
+                date_obj = datetime.date(y, m, d)
+                manual_fixed_shifts.setdefault(date_obj, []).append(staff_name)
+            except Exception:
+                continue
+
+        no_shift_dates = set()
+        for i in range(self.no_shift_list.count()):
+            try:
+                no_shift_dates.add(datetime.date.fromisoformat(self.no_shift_list.item(i).text()))
+            except Exception:
+                continue
+        return manual_vacations, manual_fixed_shifts, no_shift_dates
+
+    def _run_precheck(self):
+        try:
+            y = self.year_spinbox.value()
+            m = self.month_combo.currentIndex() + 1
+            cal = generate_calendar_with_holidays(y, m)
+            staff_manager = self.settings_manager.staff_manager
+            active_staff = [s for s in staff_manager.get_all_staff() if s.is_active]
+            manual_vacations, manual_fixed, no_shift_dates = self._collect_monthly_constraints()
+
+            scheduler = ShiftScheduler(self.settings_manager.staff_manager, cal, ignore_rules_on_holidays=self.settings_manager.ignore_rules_on_holidays)
+            rb_vac = scheduler._generate_vacations_from_rules(self.settings_manager.rule_based_vacations, y, m)
+            jp_holidays = scheduler.jp_holidays
+
+            conflicts = []
+            for date_obj, staff_names in manual_fixed.items():
+                if date_obj in no_shift_dates:
+                    conflicts.append(f"{date_obj}: 不要日と固定が衝突（不要日=優先で固定無効）")
+                weekday_str = next((d['weekday'] for d in cal if d['date'] == date_obj), None)
+                for name in staff_names:
+                    if name in manual_vacations and date_obj in manual_vacations[name]:
+                        conflicts.append(f"{date_obj}: {name} 固定と月限定休暇が衝突（休暇優先）")
+                    if date_obj in (rb_vac.get(name, set())):
+                        conflicts.append(f"{date_obj}: {name} 固定とルール休暇が衝突（休暇優先）")
+                    st = staff_manager.get_staff_by_name(name)
+                    if st and weekday_str and (weekday_str in st.impossible_weekdays):
+                        if not (self.settings_manager.ignore_rules_on_holidays and date_obj in jp_holidays):
+                            conflicts.append(f"{date_obj}: {name} は {weekday_str} 不可（固定は無効化される）")
+
+            def min_needed_for(day_info):
+                return scheduler._get_shift_range_for_day(day_info, self.settings_manager.shifts_per_day)[0]
+
+            shortages = []
+            for day in cal:
+                date_obj = day['date']
+                min_needed = min_needed_for(day)
+                if date_obj in no_shift_dates:
+                    if min_needed > 0:
+                        shortages.append(f"{date_obj}: 不要日だが最小人数が {min_needed}（設定矛盾）")
+                    continue
+                available = 0
+                for st in active_staff:
+                    name = st.name
+                    if (name in manual_vacations and date_obj in manual_vacations[name]) or (date_obj in rb_vac.get(name, set())):
+                        continue
+                    if not (self.settings_manager.ignore_rules_on_holidays and date_obj in jp_holidays):
+                        if day['weekday'] in st.impossible_weekdays:
+                            continue
+                    available += 1
+                if available < min_needed:
+                    shortages.append(f"{date_obj}: 必要 {min_needed} に対し可用 {available}（不足 {min_needed-available}）")
+
+            lines = []
+            lines.append(f"[事前チェック] 年月: {y}-{m:02d}")
+            lines.append("")
+            lines.append("■ 衝突（固定/休暇/不要日/不可曜日）")
+            if conflicts:
+                lines += ["- " + c for c in conflicts]
+            else:
+                lines.append("- なし")
+            lines.append("")
+            lines.append("■ 人数不足の可能性（日別）")
+            if shortages:
+                lines += ["- " + s for s in shortages]
+            else:
+                lines.append("- なし")
+
+            report = "\n".join(lines)
+            dlg = QDialog(self)
+            dlg.setWindowTitle("事前チェックレポート")
+            lay = QVBoxLayout(dlg)
+            txt = QPlainTextEdit()
+            txt.setPlainText(report)
+            txt.setReadOnly(True)
+            lay.addWidget(txt)
+            btns = QHBoxLayout()
+            close_btn = QPushButton("閉じる")
+            close_btn.clicked.connect(dlg.accept)
+            btns.addStretch(); btns.addWidget(close_btn)
+            lay.addLayout(btns)
+            dlg.resize(700, 500)
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.warning(self, "エラー", f"事前チェック中にエラーが発生しました:\n{e}")
