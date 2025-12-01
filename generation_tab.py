@@ -401,6 +401,9 @@ class GenerationTab(QWidget):
         self.history_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.history_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.history_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.history_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.history_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         history_top_layout.addWidget(self.history_table)
         history_splitter.addWidget(history_top)
         # bottom: preview + summary
@@ -1140,6 +1143,12 @@ class GenerationTab(QWidget):
                 self.history_table.setItem(i, 3, QTableWidgetItem(str(total_sum)))
                 self.history_table.setItem(i, 4, QTableWidgetItem(str(fairness_sum)))
             self.history_table.resizeRowsToContents()
+            if files:
+                try:
+                    self.history_table.selectRow(0)
+                    self._on_history_selected()
+                except Exception:
+                    pass
         except Exception as e:
             print('history refresh error:', e)
 
@@ -1196,7 +1205,7 @@ class GenerationTab(QWidget):
     def _render_history_summary(self, data: dict):
         counts = data.get('counts', {}) or {}
         fcounts = data.get('fairness_group_counts', {}) or {}
-        names = sorted(counts.keys())
+        names = sorted(set(counts.keys()) | set(fcounts.keys()))
         self.history_summary_table.setRowCount(len(names))
         for i, name in enumerate(names):
             self.history_summary_table.setItem(i, 0, QTableWidgetItem(name))
