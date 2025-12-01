@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QRadioButton, QDialogButtonBox # ★ 新しくインポート
 )
 from PySide6.QtCore import Qt, QDate, QThread, Signal, QRect, QPoint, QModelIndex
-from PySide6.QtGui import QColor, QPainter, QBrush
+from PySide6.QtGui import QColor, QPainter, QBrush, QTextCharFormat
 
 from excel_exporter import export_to_excel
 from pdf_exporter import export_to_pdf
@@ -435,7 +435,7 @@ class GenerationTab(QWidget):
         calendar_widget.setGridVisible(True)
         calendar_widget.setMinimumDate(QDate(year, month, 1))
         calendar_widget.setMaximumDate(QDate(year, month, 1).addMonths(1).addDays(-1))
-        calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.SingleSelection)
+        calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.NoSelection)
         add_button = QPushButton("選択した日付を追加 →")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
@@ -456,6 +456,41 @@ class GenerationTab(QWidget):
             if item_text.endswith(f": {staff_name}"):
                 date_str = item_text.split(': ')[0]
                 temp_list.addItem(date_str)
+                # 初期ハイライト
+                parts = [int(x) for x in date_str.split('-')]
+                qd = QDate(parts[0], parts[1], parts[2])
+                fmt = QTextCharFormat(); fmt.setBackground(QColor('#CCE5FF')); fmt.setFontWeight(75)
+                calendar_widget.setDateTextFormat(qd, fmt)
+        # クリックでトグル選択
+        selected_set = {temp_list.item(i).text() for i in range(temp_list.count())}
+        def toggle_date(qdate: QDate):
+            nonlocal selected_set
+            selected_date_str = qdate.toString("yyyy-MM-dd")
+            if selected_date_str in selected_set:
+                # 解除
+                selected_set.remove(selected_date_str)
+                fmt = QTextCharFormat()
+                calendar_widget.setDateTextFormat(qdate, fmt)
+                items = temp_list.findItems(selected_date_str, Qt.MatchFlag.MatchExactly)
+                for it in items:
+                    temp_list.takeItem(temp_list.row(it))
+            else:
+                # 追加は add_date_to_list と同じ検証
+                if selected_date_str in current_no_shift_dates:
+                    QMessageBox.warning(dialog, "ルール衝突", f"{selected_date_str} は担当者不要日に設定されているため、固定シフトは追加できません。")
+                    return
+                for i in range(self.fixed_shift_list.count()):
+                    item = self.fixed_shift_list.item(i)
+                    if item.text().startswith(selected_date_str) and not item.text().endswith(f": {staff_name}"):
+                        QMessageBox.warning(dialog, "重複エラー", f"{selected_date_str} は既に他のスタッフで固定されています。")
+                        return
+                if not temp_list.findItems(selected_date_str, Qt.MatchFlag.MatchExactly):
+                    temp_list.addItem(selected_date_str)
+                    temp_list.sortItems()
+                selected_set.add(selected_date_str)
+                fmt = QTextCharFormat(); fmt.setBackground(QColor('#CCE5FF')); fmt.setFontWeight(75)
+                calendar_widget.setDateTextFormat(qdate, fmt)
+        calendar_widget.clicked.connect(toggle_date)
         def add_date_to_list():
             selected_date_str = calendar_widget.selectedDate().toString("yyyy-MM-dd")
             if selected_date_str in current_no_shift_dates:
@@ -499,7 +534,7 @@ class GenerationTab(QWidget):
         calendar_widget.setGridVisible(True)
         calendar_widget.setMinimumDate(QDate(year, month, 1))
         calendar_widget.setMaximumDate(QDate(year, month, 1).addMonths(1).addDays(-1))
-        calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.SingleSelection)
+        calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.NoSelection)
         add_button = QPushButton("選択した日付を追加 →")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
@@ -521,6 +556,38 @@ class GenerationTab(QWidget):
             current_fixed_shifts[date_str] = staff_name
         for i in range(self.no_shift_list.count()):
             temp_list.addItem(self.no_shift_list.item(i).text())
+            dstr = self.no_shift_list.item(i).text()
+            y,m,dd = [int(x) for x in dstr.split('-')]
+            qd = QDate(y, m, dd)
+            fmt = QTextCharFormat(); fmt.setBackground(QColor('#FFE8CC')); fmt.setFontWeight(75)
+            calendar_widget.setDateTextFormat(qd, fmt)
+        selected_set = {temp_list.item(i).text() for i in range(temp_list.count())}
+        def toggle_date_noshift(qdate: QDate):
+            nonlocal selected_set
+            selected_date_str = qdate.toString("yyyy-MM-dd")
+            if selected_date_str in selected_set:
+                selected_set.remove(selected_date_str)
+                fmt = QTextCharFormat(); calendar_widget.setDateTextFormat(qdate, fmt)
+                items = temp_list.findItems(selected_date_str, Qt.MatchFlag.MatchExactly)
+                for it in items:
+                    temp_list.takeItem(temp_list.row(it))
+            else:
+                if selected_date_str in current_fixed_shifts:
+                    staff_name = current_fixed_shifts[selected_date_str]
+                    reply = QMessageBox.question(dialog, "ルール衝突の確認",
+                                                 f"{selected_date_str} には {staff_name} の固定シフトが設定されています。\n"
+                                                 "担当者不要日に設定すると、この固定シフトは無視されますがよろしいですか？",
+                                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                                 QMessageBox.StandardButton.No)
+                    if reply == QMessageBox.StandardButton.No:
+                        return
+                if not temp_list.findItems(selected_date_str, Qt.MatchFlag.MatchExactly):
+                    temp_list.addItem(selected_date_str)
+                    temp_list.sortItems()
+                selected_set.add(selected_date_str)
+                fmt = QTextCharFormat(); fmt.setBackground(QColor('#FFE8CC')); fmt.setFontWeight(75)
+                calendar_widget.setDateTextFormat(qdate, fmt)
+        calendar_widget.clicked.connect(toggle_date_noshift)
         def add_date_to_list():
             selected_date_str = calendar_widget.selectedDate().toString("yyyy-MM-dd")
             if selected_date_str in current_fixed_shifts:
@@ -565,7 +632,7 @@ class GenerationTab(QWidget):
         calendar_widget.setGridVisible(True)
         calendar_widget.setMinimumDate(QDate(year, month, 1))
         calendar_widget.setMaximumDate(QDate(year, month, 1).addMonths(1).addDays(-1))
-        calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.SingleSelection)
+        calendar_widget.setSelectionMode(QCalendarWidget.SelectionMode.NoSelection)
         add_button = QPushButton("選択した日付を追加 →")
         temp_list = QListWidget()
         button_box = QHBoxLayout()
@@ -586,6 +653,35 @@ class GenerationTab(QWidget):
                 dates_part = item_text.split(': ')[1]
                 for d_str in dates_part.split(', '):
                     temp_list.addItem(d_str)
+                    # 既存休暇をハイライト
+                    try:
+                        day = int(d_str.replace('日',''))
+                        qd = QDate(year, month, day)
+                        fmt = QTextCharFormat(); fmt.setBackground(QColor('#FFD6E7')); fmt.setFontWeight(75)
+                        calendar_widget.setDateTextFormat(qd, fmt)
+                    except Exception:
+                        pass
+        selected_days = {int(temp_list.item(i).text().replace('日','')) for i in range(temp_list.count()) if temp_list.item(i).text().endswith('日')}
+        def toggle_date_vac(qdate: QDate):
+            nonlocal selected_days
+            day = qdate.day()
+            label = f"{day}日"
+            if day in selected_days:
+                selected_days.remove(day)
+                fmt = QTextCharFormat(); calendar_widget.setDateTextFormat(qdate, fmt)
+                items = temp_list.findItems(label, Qt.MatchFlag.MatchExactly)
+                for it in items:
+                    temp_list.takeItem(temp_list.row(it))
+            else:
+                if not temp_list.findItems(label, Qt.MatchFlag.MatchExactly):
+                    temp_list.addItem(label)
+                    items = [temp_list.item(i).text() for i in range(temp_list.count())]
+                    items.sort(key=lambda x: int(x.replace('日','')))
+                    temp_list.clear(); temp_list.addItems(items)
+                selected_days.add(day)
+                fmt = QTextCharFormat(); fmt.setBackground(QColor('#FFD6E7')); fmt.setFontWeight(75)
+                calendar_widget.setDateTextFormat(qdate, fmt)
+        calendar_widget.clicked.connect(toggle_date_vac)
         def add_date_to_list():
             selected_date = calendar_widget.selectedDate().toString("d日")
             if not temp_list.findItems(selected_date, Qt.MatchFlag.MatchExactly):

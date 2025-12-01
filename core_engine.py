@@ -173,7 +173,11 @@ class ShiftScheduler:
                 found_solutions.append(solution)
             else:
                 if status == cp_model.INFEASIBLE:
-                    return "シフトが見つかりませんでした（制約の衝突）"
+                    # ORIGINE 相当: 不充足の原因推定レポートを返す
+                    try:
+                        return self._analyze_infeasibility(solver)
+                    except Exception:
+                        return "シフトが見つかりませんでした（制約の衝突）"
                 break
 
         return found_solutions
@@ -254,14 +258,14 @@ class ShiftScheduler:
         return result
 
     def _add_hard_constraints(self, model, shifts, staff_list, day_list,
-                              no_shift_dates, shifts_per_day_config,
-                              rule_based_vacations, vacations,
-                              min_interval, max_consecutive_days,
-                              last_month_end_dates, prev_month_consecutive_days,
-                              fairness_group, avoid_consecutive_same_weekday,
-                              last_week_assignments,
-                              manual_fixed_shifts: dict | None = None,
-                              rule_based_fixed_shifts_list: List[RuleBasedFixedShift] | None = None):
+                               no_shift_dates, shifts_per_day_config,
+                               rule_based_vacations, vacations,
+                               min_interval, max_consecutive_days,
+                               last_month_end_dates, prev_month_consecutive_days,
+                               fairness_group, avoid_consecutive_same_weekday,
+                               last_week_assignments,
+                               manual_fixed_shifts: dict | None = None,
+                               rule_based_fixed_shifts_list: List[RuleBasedFixedShift] | None = None):
 
         num_staff = len(staff_list)
         year = day_list[0]['date'].year
@@ -272,10 +276,18 @@ class ShiftScheduler:
         for d, day_info in enumerate(day_list):
             date_obj = day_info['date']
             if no_shift_dates and date_obj in no_shift_dates:
-                model.Add(sum(shifts[(s, d)] for s in range(num_staff)) == 0)
+                c = model.Add(sum(shifts[(s, d)] for s in range(num_staff)) == 0)
+                try:
+                    self.constraint_tags[c.Index()] = f"{date_obj.day}日の必要人数（不要日=0）"
+                except Exception:
+                    pass
                 continue
             min_needed, max_needed = self._get_shift_range_for_day(day_info, shifts_per_day_config)
-            model.AddLinearConstraint(sum(shifts[(s, d)] for s in range(num_staff)), min_needed, max_needed)
+            c_need = model.AddLinearConstraint(sum(shifts[(s, d)] for s in range(num_staff)), min_needed, max_needed)
+            try:
+                self.constraint_tags[c_need.Index()] = f"{date_obj.day}日の必要人数（{min_needed}〜{max_needed}人）"
+            except Exception:
+                pass
 
         # Build vacation/fixed maps
         generated_vac = self._generate_vacations_from_rules(rule_based_vacations, year, month)
@@ -293,20 +305,36 @@ class ShiftScheduler:
                 date_obj = day_info['date']
                 # Month-limited vacation (hard 0)
                 if date_obj in manual_vacations.get(staff.name, set()):
-                    model.Add(shifts[(s, d)] == 0)
+                    c = model.Add(shifts[(s, d)] == 0)
+                    try:
+                        self.constraint_tags[c.Index()] = f"{staff.name}の{date_obj.day}日（月限定休暇）"
+                    except Exception:
+                        pass
                     continue
                 # Month-limited fixed (hard 1)
                 if (staff.name, date_obj) in manual_fixed_lookup:
-                    model.Add(shifts[(s, d)] == 1)
+                    c = model.Add(shifts[(s, d)] == 1)
+                    try:
+                        self.constraint_tags[c.Index()] = f"{staff.name}の{date_obj.day}日（月限定固定）"
+                    except Exception:
+                        pass
                     continue
                 # Rule-based vacation (hard 0)
                 if date_obj in generated_vac.get(staff.name, set()):
-                    model.Add(shifts[(s, d)] == 0)
+                    c = model.Add(shifts[(s, d)] == 0)
+                    try:
+                        self.constraint_tags[c.Index()] = f"{staff.name}の{date_obj.day}日（ルール休暇）"
+                    except Exception:
+                        pass
                     continue
                 # Staff impossible weekday (weakest)
                 is_holiday_and_ignored = self.ignore_rules_on_holidays and date_obj in self.jp_holidays
                 if not staff.is_available(day_info['weekday']) and not is_holiday_and_ignored:
-                    model.Add(shifts[(s, d)] == 0)
+                    c = model.Add(shifts[(s, d)] == 0)
+                    try:
+                        self.constraint_tags[c.Index()] = f"{staff.name}の{day_info['weekday']}曜日の不可日"
+                    except Exception:
+                        pass
 
             # last-month carry over for min interval
             if last_month_end_dates and staff.name in last_month_end_dates:
@@ -318,7 +346,11 @@ class ShiftScheduler:
                         date_obj2 = day_list[d]['date']
                         if (staff.name, date_obj2) in planned_fixed_lookup:
                             continue
-                        model.Add(shifts[(s, d)] == 0)
+                        c = model.Add(shifts[(s, d)] == 0)
+                        try:
+                            self.constraint_tags[c.Index()] = f"{staff.name}の{date_obj2.day}日の勤務不可（前月からの間隔）"
+                        except Exception:
+                            pass
 
             # Min interval (skip only when both ends are planned fixed)
             for d in range(len(day_list) - min_interval - 1):
@@ -332,7 +364,11 @@ class ShiftScheduler:
                     k_date = day_list[k]['date']
                     if (staff.name, d_date) in planned_fixed_lookup and (staff.name, k_date) in planned_fixed_lookup:
                         continue
-                    model.AddImplication(shifts[(s, k)], lit_d.Not()).OnlyEnforceIf([lit_d, lit_d1_not])
+                    c = model.AddImplication(shifts[(s, k)], lit_d.Not()).OnlyEnforceIf([lit_d, lit_d1_not])
+                    try:
+                        self.constraint_tags[c.Index()] = f"{staff.name}の{d_date.day}日からの休み間隔"
+                    except Exception:
+                        pass
 
             # Max consecutive (skip window only if it contains adjacent planned fixed pair)
             for d in range(len(day_list) - max_consecutive_days):
@@ -347,7 +383,11 @@ class ShiftScheduler:
                 if has_planned_pair:
                     continue
                 window = [shifts[(s, i)] for i in window_indices]
-                model.Add(sum(window) <= max_consecutive_days)
+                c = model.Add(sum(window) <= max_consecutive_days)
+                try:
+                    self.constraint_tags[c.Index()] = f"{staff.name}の{day_list[d]['date'].day}日からの最大連勤"
+                except Exception:
+                    pass
 
             if prev_month_consecutive_days and staff.name in prev_month_consecutive_days:
                 consecutive = prev_month_consecutive_days[staff.name]
@@ -364,7 +404,11 @@ class ShiftScheduler:
                                 break
                         if not has_planned_pair2:
                             window = [shifts[(s, d)] for d in indices]
-                            model.Add(sum(window) <= remaining_days)
+                            c = model.Add(sum(window) <= remaining_days)
+                            try:
+                                self.constraint_tags[c.Index()] = f"{staff.name}の月初の連勤制限"
+                            except Exception:
+                                pass
 
     def _add_soft_constraints(self, model, shifts, staff_list, day_list,
                               rule_based_fixed_shifts, manual_fixed_shifts):
@@ -582,6 +626,34 @@ class ShiftScheduler:
                         counts[staff.name] += 1
         return counts
 
+    def _analyze_infeasibility(self, solver) -> str:
+        """不充足時に、衝突している可能性が高い制約を簡易レポートとして返す。
+        ORIGINE 相当の SufficientAssumptionsForInfeasibility 利用＋フォールバック。
+        """
+        try:
+            assumptions = solver.SufficientAssumptionsForInfeasibility()
+        except Exception:
+            assumptions = []
+        if not assumptions:
+            # フォールバック: タグ一覧を付けた汎用メッセージ
+            return (
+                "シフトが見つかりませんでした。ルールを緩めて再試行してください。\n"
+                "ヒント: 月限定休暇/固定、必要人数、休み間隔、最大連勤、特別日の公平性などを見直してください。"
+            )
+        lines = ["シフトが見つかりませんでした。以下のルールが衝突している可能性があります："]
+        for idx in assumptions:
+            tag = self.constraint_tags.get(idx)
+            if tag:
+                lines.append(f"・ {tag}")
+            else:
+                try:
+                    lit = cp_model.Literal(idx)
+                    tag = self.constraint_tags.get(lit.Var(), f"不明なルール({lit.Name()})")
+                    lines.append(f"・ {tag}")
+                except Exception:
+                    pass
+        return "\n".join(lines)
+
 
 class SettingsManager:
     def __init__(self, history_dir: str = "shift_history"):
@@ -597,7 +669,7 @@ class SettingsManager:
         self.fairness_group: set = set()
         self.max_solutions: int = 1
         self.fairness_tolerance: int = 1
-        self.excel_title: str = "蠖鍋峩莠亥ｮ夊｡ｨ"
+        self.excel_title: str = "シフト表"
         self.history_dir = history_dir
         os.makedirs(self.history_dir, exist_ok=True)
 
@@ -655,7 +727,7 @@ class SettingsManager:
         settings.fairness_group = set(general.get("fairness_group", []))
         settings.max_solutions = general.get("max_solutions", 1)
         settings.fairness_tolerance = general.get("fairness_tolerance", 1)
-        settings.excel_title = general.get("excel_title", "蠖鍋峩莠亥ｮ夊｡ｨ")
+        settings.excel_title = general.get("excel_title", "シフト表")
         return settings
 
     def save_to_file(self, path: str) -> bool:
