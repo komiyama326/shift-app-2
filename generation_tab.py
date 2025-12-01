@@ -350,6 +350,26 @@ class GenerationTab(QWidget):
         self.preview_table = QTableWidget()
         preview_splitter.addWidget(self.preview_table)
 
+        # 出力設定（出力先フォルダの指定）
+        output_group = QGroupBox("出力設定")
+        output_form = QFormLayout(output_group)
+        self.output_dir_edit = QLineEdit()
+        self.output_dir_edit.setText(self.last_save_directory)
+        browse_btn = QPushButton("参照...")
+        def _browse_output_dir():
+            dirpath = QFileDialog.getExistingDirectory(self, "出力先フォルダを選択", self.output_dir_edit.text() or self.last_save_directory)
+            if dirpath:
+                self.last_save_directory = dirpath
+                self.output_dir_edit.setText(dirpath)
+        browse_btn.clicked.connect(_browse_output_dir)
+        output_row = QHBoxLayout()
+        output_row.addWidget(self.output_dir_edit)
+        output_row.addWidget(browse_btn)
+        row_container = QWidget()
+        row_container.setLayout(output_row)
+        output_form.addRow("出力先フォルダ:", row_container)
+        preview_layout.addWidget(output_group)
+
         action_widget = QWidget()
         action_layout = QHBoxLayout(action_widget)
         action_layout.setContentsMargins(0, 10, 0, 0)
