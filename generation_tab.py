@@ -442,6 +442,10 @@ class GenerationTab(QWidget):
         clear_button = QPushButton("選択の全解除")
         clear_list_button = QPushButton("右リストを全クリア")
         temp_list = QListWidget()
+        # 右側リストはクリックでその行を削除できるようにする
+        def _tmp_remove_item_fixed(item):
+            temp_list.takeItem(temp_list.row(item))
+        temp_list.itemClicked.connect(_tmp_remove_item_fixed)
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
         cancel_button = QPushButton("キャンセル")
@@ -557,6 +561,9 @@ class GenerationTab(QWidget):
         clear_button = QPushButton("選択の全解除")
         clear_list_button = QPushButton("右リストを全クリア")
         temp_list = QListWidget()
+        def _tmp_remove_item_noshift(item):
+            temp_list.takeItem(temp_list.row(item))
+        temp_list.itemClicked.connect(_tmp_remove_item_noshift)
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
         cancel_button = QPushButton("キャンセル")
@@ -666,6 +673,9 @@ class GenerationTab(QWidget):
         clear_button = QPushButton("選択の全解除")
         clear_list_button = QPushButton("右リストを全クリア")
         temp_list = QListWidget()
+        def _tmp_remove_item_vac(item):
+            temp_list.takeItem(temp_list.row(item))
+        temp_list.itemClicked.connect(_tmp_remove_item_vac)
         button_box = QHBoxLayout()
         ok_button = QPushButton("完了")
         cancel_button = QPushButton("キャンセル")
