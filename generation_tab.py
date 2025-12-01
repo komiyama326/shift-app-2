@@ -206,6 +206,15 @@ class GenerationTab(QWidget):
         self.update_options_ui()
         
         self.preview_table.setItemDelegate(StaffColorDelegate(self.preview_table))
+        # History view wiring
+        try:
+            self.history_reload_button.clicked.connect(self._refresh_history_list)
+            self.history_open_dir_button.clicked.connect(self._open_history_dir)
+            self.history_delete_button.clicked.connect(self._delete_selected_history)
+            self.history_table.itemSelectionChanged.connect(self._on_history_selected)
+            self._refresh_history_list()
+        except Exception:
+            pass
 
     def set_settings_manager(self, settings_manager: SettingsManager):
         # ... (変更なし) ...
@@ -341,35 +350,78 @@ class GenerationTab(QWidget):
         solutions_group.setLayout(solutions_layout)
         result_splitter.addWidget(solutions_group)
 
-        # ★★★★★ ここからUI変更 ★★★★★
-        preview_group = QGroupBox("選択したパターンの詳細とアクション")
+        # --- Right bottom: tabs (Preview / History) ---
+        preview_group = QGroupBox("選択したパターン / 履歴")
         preview_layout = QVBoxLayout(preview_group)
-        
+
+        right_tabs = QTabWidget()
+
+        # Tab 1: Preview
+        preview_tab = QWidget()
+        preview_tab_layout = QVBoxLayout(preview_tab)
         preview_splitter = QSplitter(Qt.Orientation.Vertical)
-        
         self.preview_table = QTableWidget()
         preview_splitter.addWidget(self.preview_table)
-
-        # 出力設定は基本設定タブで指定します（ここには表示しない）
-
         action_widget = QWidget()
         action_layout = QHBoxLayout(action_widget)
         action_layout.setContentsMargins(0, 10, 0, 0)
-
         self.save_history_button = QPushButton("このシフトを履歴として保存")
         self.export_file_button = QPushButton("ファイルに出力...")
-        
         self.save_history_button.setEnabled(False)
         self.export_file_button.setEnabled(False)
-
         action_layout.addWidget(self.save_history_button)
         action_layout.addStretch()
         action_layout.addWidget(self.export_file_button)
-        
         preview_splitter.addWidget(action_widget)
-        preview_splitter.setSizes([600, 100]) # プレビューとボタンの比率調整
+        preview_splitter.setSizes([600, 120])
+        preview_tab_layout.addWidget(preview_splitter)
+        right_tabs.addTab(preview_tab, "プレビュー")
 
-        preview_layout.addWidget(preview_splitter)
+        # Tab 2: History
+        history_tab = QWidget()
+        history_tab_layout = QVBoxLayout(history_tab)
+        history_splitter = QSplitter(Qt.Orientation.Vertical)
+        # top: list
+        history_top = QWidget()
+        history_top_layout = QVBoxLayout(history_top)
+        history_toolbar = QHBoxLayout()
+        self.history_reload_button = QPushButton("再読込")
+        self.history_open_dir_button = QPushButton("フォルダを開く")
+        self.history_delete_button = QPushButton("削除")
+        history_toolbar.addWidget(self.history_reload_button)
+        history_toolbar.addWidget(self.history_open_dir_button)
+        history_toolbar.addWidget(self.history_delete_button)
+        history_toolbar.addStretch()
+        history_top_layout.addLayout(history_toolbar)
+        self.history_table = QTableWidget()
+        self.history_table.setColumnCount(5)
+        self.history_table.setHorizontalHeaderLabels(["年月", "ファイル名", "登録日", "総回数合計", "特別日合計"])
+        self.history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.history_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        history_top_layout.addWidget(self.history_table)
+        history_splitter.addWidget(history_top)
+        # bottom: preview + summary
+        history_bottom = QWidget()
+        history_bottom_layout = QHBoxLayout(history_bottom)
+        self.history_preview_table = QTableWidget()
+        self.history_preview_table.setMinimumHeight(200)
+        history_bottom_layout.addWidget(self.history_preview_table, 2)
+        self.history_summary_table = QTableWidget()
+        self.history_summary_table.setColumnCount(3)
+        self.history_summary_table.setHorizontalHeaderLabels(["スタッフ", "総回数", "特別日"])
+        self.history_summary_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.history_summary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.history_summary_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        history_bottom_layout.addWidget(self.history_summary_table, 1)
+        history_splitter.addWidget(history_bottom)
+        history_splitter.setSizes([300, 500])
+        history_tab_layout.addWidget(history_splitter)
+        right_tabs.addTab(history_tab, "履歴")
+
+        preview_layout.addWidget(right_tabs)
         result_splitter.addWidget(preview_group)
         # ★★★★★ UI変更ここまで ★★★★★
         
@@ -1041,6 +1093,145 @@ class GenerationTab(QWidget):
                     item.setForeground(QColor("black"))
         self.preview_table.resizeRowsToContents()
         self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+    # ===== 履歴ビュー関連 =====
+    def _history_dir(self) -> str:
+        try:
+            return self.settings_manager.history_dir
+        except Exception:
+            return os.path.join(os.path.expanduser('~'), 'shift_history')
+
+    def _refresh_history_list(self):
+        try:
+            dirpath = self._history_dir()
+            files = []
+            if os.path.isdir(dirpath):
+                for name in os.listdir(dirpath):
+                    p = os.path.join(dirpath, name)
+                    if not os.path.isfile(p):
+                        continue
+                    ym = None
+                    if name.endswith('.json'):
+                        # YYYY-MM.json
+                        if len(name) == 12 and name[:4].isdigit() and name[4] == '-' and name[5:7].isdigit():
+                            ym = (int(name[:4]), int(name[5:7]))
+                        # history_YYYY-MM.json
+                        elif name.startswith('history_') and len(name) == 20 and name[8:12].isdigit() and name[12] == '-' and name[13:15].isdigit():
+                            ym = (int(name[8:12]), int(name[13:15]))
+                    if ym:
+                        files.append((p, ym[0], ym[1], name))
+            files.sort(key=lambda x: (x[1], x[2]), reverse=True)
+            self.history_table.setRowCount(len(files))
+            for i, (path, y, m, name) in enumerate(files):
+                try:
+                    ts = os.path.getmtime(path)
+                    dt = datetime.datetime.fromtimestamp(ts)
+                    saved_at = dt.strftime('%Y-%m-%d %H:%M')
+                except Exception:
+                    saved_at = ''
+                data = self.settings_manager.load_history(y, m)
+                total_sum = sum((data.get('counts', {}) or {}).values()) if data else 0
+                fairness_sum = sum((data.get('fairness_group_counts', {}) or {}).values()) if data else 0
+                self.history_table.setItem(i, 0, QTableWidgetItem(f"{y}-{m:02d}"))
+                fi = QTableWidgetItem(name)
+                fi.setData(Qt.ItemDataRole.UserRole, (path, y, m))
+                self.history_table.setItem(i, 1, fi)
+                self.history_table.setItem(i, 2, QTableWidgetItem(saved_at))
+                self.history_table.setItem(i, 3, QTableWidgetItem(str(total_sum)))
+                self.history_table.setItem(i, 4, QTableWidgetItem(str(fairness_sum)))
+            self.history_table.resizeRowsToContents()
+        except Exception as e:
+            print('history refresh error:', e)
+
+    def _on_history_selected(self):
+        try:
+            rows = self.history_table.selectionModel().selectedRows()
+            if not rows:
+                self.history_preview_table.clear()
+                self.history_summary_table.clear()
+                return
+            r = rows[0].row()
+            info = self.history_table.item(r, 1).data(Qt.ItemDataRole.UserRole)
+            if not info:
+                return
+            path, y, m = info
+            data = self.settings_manager.load_history(y, m)
+            if not data:
+                return
+            schedule = {}
+            for d in data.get('schedule', []) or []:
+                try:
+                    dd = datetime.date.fromisoformat(d.get('date'))
+                    schedule[dd] = d.get('staff_names', [])
+                except Exception:
+                    continue
+            self._render_history_preview(y, m, schedule)
+            self._render_history_summary(data)
+        except Exception as e:
+            print('history select error:', e)
+
+    def _render_history_preview(self, year: int, month: int, schedule: dict):
+        cal = calendar.monthcalendar(year, month)
+        self.history_preview_table.setRowCount(len(cal))
+        self.history_preview_table.setColumnCount(7)
+        self.history_preview_table.setHorizontalHeaderLabels(list(weekdays_jp))
+        jp_holidays = holidays.JP(years=year)
+        for row_idx, week in enumerate(cal):
+            for col_idx, day in enumerate(week):
+                item = QTableWidgetItem()
+                item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+                if day == 0:
+                    self.history_preview_table.setItem(row_idx, col_idx, item)
+                    continue
+                date = datetime.date(year, month, day)
+                names = schedule.get(date, [])
+                cell_text = f"{day}\n" + ("\n".join(names) if names else "")
+                item.setText(cell_text)
+                is_hol = (col_idx >= 5) or (date in jp_holidays)
+                item.setForeground(QColor("red" if is_hol else "black"))
+                self.history_preview_table.setItem(row_idx, col_idx, item)
+        self.history_preview_table.resizeRowsToContents()
+        self.history_preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+    def _render_history_summary(self, data: dict):
+        counts = data.get('counts', {}) or {}
+        fcounts = data.get('fairness_group_counts', {}) or {}
+        names = sorted(counts.keys())
+        self.history_summary_table.setRowCount(len(names))
+        for i, name in enumerate(names):
+            self.history_summary_table.setItem(i, 0, QTableWidgetItem(name))
+            self.history_summary_table.setItem(i, 1, QTableWidgetItem(str(counts.get(name, 0))))
+            self.history_summary_table.setItem(i, 2, QTableWidgetItem(str(fcounts.get(name, 0))))
+        self.history_summary_table.resizeRowsToContents()
+
+    def _open_history_dir(self):
+        try:
+            dirpath = self._history_dir()
+            if platform.system() == 'Windows':
+                os.startfile(dirpath)
+            else:
+                webbrowser.open(dirpath)
+        except Exception as e:
+            QMessageBox.warning(self, "エラー", f"フォルダを開けませんでした:\n{e}")
+
+    def _delete_selected_history(self):
+        rows = self.history_table.selectionModel().selectedRows()
+        if not rows:
+            QMessageBox.information(self, "情報", "削除する履歴を選択してください。")
+            return
+        r = rows[0].row()
+        info = self.history_table.item(r, 1).data(Qt.ItemDataRole.UserRole)
+        if not info:
+            return
+        path, y, m = info
+        reply = QMessageBox.question(self, "確認", f"{y}年{m}月の履歴を削除しますか？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            os.remove(path)
+            self._refresh_history_list()
+        except Exception as e:
+            QMessageBox.warning(self, "エラー", f"削除に失敗しました:\n{e}")
 
     # ★★★★★ 新しいメソッド ★★★★★
     def _save_history(self):
