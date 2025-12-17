@@ -124,7 +124,7 @@ class ShiftScheduler:
                fairness_as_hard: bool = True,
                fallback_soft_on_infeasible: bool = True,
                **kwargs
-               ) -> List[dict] | str:
+                ) -> List[dict] | str:
 
         staff_list = self.all_staff
         if not staff_list:
@@ -157,6 +157,14 @@ class ShiftScheduler:
                 dispersion_penalty = self._add_dispersion_penalty(
                     model, shifts, staff_list, self.calendar_data, fairness_group, self.past_schedules
                 )
+            # 初回トライでも総回数の大きな偏りを避けるため、
+            # 月限定固定などの強い制約がある場合は全体の総回数差分<=1をハード拘束
+            if manual_fixed_shifts:
+                try:
+                    self._add_global_total_diff_leq1(model, shifts, staff_list, self.calendar_data)
+                except Exception:
+                    pass
+
             self._add_fairness_objective(
                 model, shifts, staff_list, self.calendar_data,
                 total_adjustments or {}, fairness_adjustments or {},
@@ -176,13 +184,12 @@ class ShiftScheduler:
                 found_solutions.append(solution)
             else:
                 if status == cp_model.INFEASIBLE:
-                    # 公平性がハードかつフォールバック許可時は、ソフトにして再実行
-                    if fallback_soft_on_infeasible and fairness_as_hard and (fairness_group or set()):
-                        alt = self.solve(
+                    # 通常生成が無理な場合のみ、段階的緩和を実施
+                    try:
+                        alt2 = self._progressive_relaxation(
                             shifts_per_day=shifts_per_day,
                             min_interval=min_interval,
                             max_consecutive_days=max_consecutive_days,
-                            max_solutions=max_solutions,
                             last_month_end_dates=last_month_end_dates,
                             prev_month_consecutive_days=prev_month_consecutive_days,
                             last_week_assignments=last_week_assignments,
@@ -192,26 +199,539 @@ class ShiftScheduler:
                             rule_based_fixed_shifts=rule_based_fixed_shifts,
                             vacations=vacations,
                             rule_based_vacations=rule_based_vacations,
-                            fairness_group=fairness_group,
-                            total_adjustments=total_adjustments,
-                            fairness_adjustments=fairness_adjustments,
+                            fairness_group=fairness_group or set(),
+                            total_adjustments=total_adjustments or {},
+                            fairness_adjustments=fairness_adjustments or {},
                             fairness_tolerance=fairness_tolerance,
                             disperse_duties=disperse_duties,
-                            past_schedules=self.past_schedules,
-                            fairness_as_hard=False,
-                            fallback_soft_on_infeasible=False
+                            past_schedules=self.past_schedules
                         )
-                        if isinstance(alt, list) and alt:
-                            for sdict in alt:
-                                sdict['generation_note'] = '公平性（特別日）をソフトに緩和して生成'
-                            return alt
-                    try:
-                        return self._analyze_infeasibility(solver)
+                        if isinstance(alt2, list) and alt2:
+                            return alt2
+                        # 段階的緩和でも無理な場合、詳細付きの不可分析を返す
+                        return alt2  # str
                     except Exception:
-                        return "シフトが見つかりませんでした（制約の衝突）"
+                        try:
+                            return self._analyze_infeasibility(solver)
+                        except Exception:
+                            return "シフトが見つかりませんでした（制約の衝突）"
                 break
 
         return found_solutions
+
+    # ===== 段階的緩和ロジック =====
+    def _progressive_relaxation(self,
+                                *,
+                                shifts_per_day,
+                                min_interval: int,
+                                max_consecutive_days: int,
+                                last_month_end_dates,
+                                prev_month_consecutive_days,
+                                last_week_assignments,
+                                avoid_consecutive_same_weekday: bool,
+                                no_shift_dates,
+                                manual_fixed_shifts,
+                                rule_based_fixed_shifts,
+                                vacations,
+                                rule_based_vacations,
+                                fairness_group: set,
+                                total_adjustments: dict,
+                                fairness_adjustments: dict,
+                                fairness_tolerance: int,
+                                disperse_duties: bool,
+                                past_schedules: dict
+                                ) -> List[dict] | str:
+        """通常生成が無理な場合にのみ呼ばれる。段階1→段階2の順に最小限で緩和して解を得る。"""
+        relaxations_log: List[str] = []
+        # 段階1: 勤務間隔を 1 ずつ下げ、同時に元の間隔に対する近接違反をペナルティ化して再探索
+        orig_min = max(0, int(min_interval))
+        # 下限は 1 まで（ユーザ要件）
+        for eff in range(orig_min - 1, 0, -1):
+            sol = self._try_single_with_min_interval(
+                min_interval_eff=eff,
+                orig_min_interval=orig_min,
+                shifts_per_day=shifts_per_day,
+                max_consecutive_days=max_consecutive_days,
+                last_month_end_dates=last_month_end_dates,
+                prev_month_consecutive_days=prev_month_consecutive_days,
+                last_week_assignments=last_week_assignments,
+                avoid_consecutive_same_weekday=avoid_consecutive_same_weekday,
+                no_shift_dates=no_shift_dates,
+                manual_fixed_shifts=manual_fixed_shifts,
+                rule_based_fixed_shifts=rule_based_fixed_shifts,
+                vacations=vacations,
+                rule_based_vacations=rule_based_vacations,
+                fairness_group=fairness_group,
+                total_adjustments=total_adjustments,
+                fairness_adjustments=fairness_adjustments,
+                fairness_tolerance=fairness_tolerance,
+                disperse_duties=disperse_duties,
+                past_schedules=past_schedules,
+                enforce_total_diff_all_leq1=True,
+                fairness_hard_names=None,
+                fairness_soft_names=None
+            )
+            relaxations_log.append(f"勤務間隔を {orig_min}→{eff} に緩和（近接違反はペナルティ化）／総回数差分≤1をハード拘束")
+            if isinstance(sol, dict):
+                sol['relaxations'] = relaxations_log
+                return [sol]
+        # 1日でも無理なら段階2へ
+        # 段階2: 厳しいスタッフを抽出し、期待回数（総回数）を個別に引き下げ
+        tough_adj = self._estimate_tough_staff_adjustments(
+            shifts_per_day, fairness_group, no_shift_dates, vacations, rule_based_vacations
+        )
+        if tough_adj:
+            relaxations_log.append(
+                "フェアネス: 問題スタッフの期待回数を個別に引き下げ (" + ", ".join(f"{k}:{v}" for k, v in tough_adj.items()) + ")"
+            )
+        # 合成調整（総回数の期待を tough だけ下げる）
+        fa_total = dict(total_adjustments or {})
+        for name, delta in tough_adj.items():
+            fa_total[name] = fa_total.get(name, 0) - abs(int(delta))
+        # Others の総回数レンジ計算（固定が多い人も tough に含める）
+        staff_names = {st.name for st in self.all_staff}
+        tough_names = set(tough_adj.keys())
+        # 固定回数を集計し、ベースライン（総必要回数/人数）を超える人を tough に追加
+        R_total = 0
+        for day in self.calendar_data:
+            mn, _ = self._get_shift_range_for_day(day, shifts_per_day)
+            R_total += mn
+        fixed_counts = self._count_manual_fixed_by_staff(manual_fixed_shifts)
+        import math
+        baseline = math.floor(R_total / max(1, len(self.all_staff)))
+        tough_fixed = {name for name, cnt in fixed_counts.items() if cnt > baseline}
+        if tough_fixed:
+            relaxations_log.append("固定日数が多いスタッフを問題スタッフとして扱う: " + ", ".join(sorted(list(tough_fixed))))
+        tough_names = tough_names | tough_fixed
+        # 特別日/曜日フェアネスの期待も tough だけ下げる（固定超過や可用不足を反映）
+        fa_fair = dict(fairness_adjustments or {})
+        for name in tough_names:
+            over_fixed = max(0, fixed_counts.get(name, 0) - baseline)
+            delta_need = abs(int(tough_adj.get(name, 0))) + over_fixed
+            if delta_need > 0:
+                fa_fair[name] = fa_fair.get(name, 0) - delta_need
+        if tough_names:
+            relaxations_log.append("フェアネス: 問題スタッフの特別日/曜日期待回数を個別に引き下げ")
+        others_names = staff_names - tough_names
+        others_bounds = None
+        if others_names:
+            # 問題スタッフの月限定固定分（確定分）
+            F_tough = 0
+            for name, cnt in fixed_counts.items():
+                if name in tough_names:
+                    F_tough += cnt
+            R_remain = max(0, R_total - F_tough)
+            M = max(1, len(others_names))
+            L = math.floor(R_remain / M)
+            U = math.ceil(R_remain / M)
+            others_bounds = (L, U)
+            relaxations_log.append(f"非問題スタッフの総回数を範囲拘束: {L}〜{U}")
+        # min_interval は 1 まで下げた状態＋近接違反ペナルティ＋Others範囲拘束で再探索
+        sol2 = self._try_single_with_min_interval(
+            min_interval_eff=1,
+            orig_min_interval=orig_min,
+            shifts_per_day=shifts_per_day,
+            max_consecutive_days=max_consecutive_days,
+            last_month_end_dates=last_month_end_dates,
+            prev_month_consecutive_days=prev_month_consecutive_days,
+            last_week_assignments=last_week_assignments,
+            avoid_consecutive_same_weekday=avoid_consecutive_same_weekday,
+            no_shift_dates=no_shift_dates,
+            manual_fixed_shifts=manual_fixed_shifts,
+            rule_based_fixed_shifts=rule_based_fixed_shifts,
+            vacations=vacations,
+            rule_based_vacations=rule_based_vacations,
+            fairness_group=fairness_group,
+            total_adjustments=fa_total,
+            fairness_adjustments=fa_fair,
+            fairness_tolerance=fairness_tolerance,
+            disperse_duties=disperse_duties,
+            past_schedules=past_schedules,
+            others_total_bounds=others_bounds,
+            others_names=others_names,
+            fairness_hard_names=others_names,
+            fairness_soft_names=tough_names
+        )
+        if isinstance(sol2, dict):
+            sol2['relaxations'] = relaxations_log
+            return [sol2]
+        # 範囲拘束で不可なら、Others の総回数の差分 <= 1 のみに緩和して再試行
+        if others_names:
+            relaxations_log.append("非問題スタッフの総回数差分を1以内に緩和（範囲拘束を撤回）")
+            sol3 = self._try_single_with_min_interval(
+                min_interval_eff=1,
+                orig_min_interval=orig_min,
+                shifts_per_day=shifts_per_day,
+                max_consecutive_days=max_consecutive_days,
+                last_month_end_dates=last_month_end_dates,
+                prev_month_consecutive_days=prev_month_consecutive_days,
+                last_week_assignments=last_week_assignments,
+                avoid_consecutive_same_weekday=avoid_consecutive_same_weekday,
+                no_shift_dates=no_shift_dates,
+                manual_fixed_shifts=manual_fixed_shifts,
+                rule_based_fixed_shifts=rule_based_fixed_shifts,
+                vacations=vacations,
+                rule_based_vacations=rule_based_vacations,
+                fairness_group=fairness_group,
+                total_adjustments=fa_total,
+                fairness_adjustments=fa_fair,
+                fairness_tolerance=fairness_tolerance,
+                disperse_duties=disperse_duties,
+                past_schedules=past_schedules,
+                others_names=others_names,
+                enforce_others_diff_leq1=True,
+                fairness_hard_names=others_names,
+                fairness_soft_names=tough_names
+            )
+            if isinstance(sol3, dict):
+                sol3['relaxations'] = relaxations_log
+                return [sol3]
+        # ここまでで解が出る想定。無理なら診断情報を付けて返す
+        diag = self._build_stage2_diagnostic(
+            tough_names=tough_names,
+            fixed_counts=fixed_counts,
+            R_total=R_total,
+            others_names=others_names,
+            others_bounds=others_bounds,
+            max_consecutive_days=max_consecutive_days,
+            manual_fixed_shifts=manual_fixed_shifts
+        )
+        base = sol2 if isinstance(sol2, str) else "シフトが見つかりませんでした（緩和後も不可）"
+        return base + "\n\n" + diag
+
+    def _try_single_with_min_interval(self,
+                                      *,
+                                      min_interval_eff: int,
+                                      orig_min_interval: int,
+                                      shifts_per_day,
+                                      max_consecutive_days,
+                                      last_month_end_dates,
+                                      prev_month_consecutive_days,
+                                      last_week_assignments,
+                                      avoid_consecutive_same_weekday: bool,
+                                      no_shift_dates,
+                                      manual_fixed_shifts,
+                                      rule_based_fixed_shifts,
+                                      vacations,
+                                      rule_based_vacations,
+                                      fairness_group: set,
+                                      total_adjustments: dict,
+                                      fairness_adjustments: dict,
+                                      fairness_tolerance: int,
+                                      disperse_duties: bool,
+                                      past_schedules: dict,
+                                      others_total_bounds: Tuple[int, int] | None = None,
+                                      others_names: Set[str] | None = None,
+                                      enforce_others_diff_leq1: bool = False,
+                                      enforce_total_diff_all_leq1: bool = False,
+                                      fairness_hard_names: Set[str] | None = None,
+                                      fairness_soft_names: Set[str] | None = None
+                                      ) -> dict | str:
+        model = cp_model.CpModel()
+        self.constraint_tags = {}
+        staff_list = self.all_staff
+        day_list = self.calendar_data
+        shifts = self._define_variables(model, staff_list, day_list)
+        # ハード制約（min_interval は緩和後の値）
+        self._add_hard_constraints(
+            model, shifts, staff_list, day_list,
+            no_shift_dates, shifts_per_day,
+            rule_based_vacations, vacations,
+            min_interval_eff, max_consecutive_days,
+            last_month_end_dates, prev_month_consecutive_days,
+            fairness_group, avoid_consecutive_same_weekday,
+            last_week_assignments,
+            manual_fixed_shifts,
+            rule_based_fixed_shifts
+        )
+        # ソフト制約（ルール固定など）
+        _, fixed_penalty = self._add_soft_constraints(model, shifts, staff_list, day_list,
+                                                      rule_based_fixed_shifts, None)
+        # 1B: 近接違反ペナルティ（元の min_interval を尊重）
+        manual_fixed_lookup = self._manual_fixed_lookup(manual_fixed_shifts)
+        minint_penalty = self._add_min_interval_soft_penalties(
+            model, shifts, staff_list, day_list,
+            orig_min_interval, manual_fixed_lookup
+        )
+        # Stage2/Stage1用: 総回数のハード拘束
+        if (others_total_bounds or enforce_others_diff_leq1) and others_names:
+            num_days = len(day_list)
+            # 合計回数変数を各スタッフに作る
+            total_vars: Dict[str, cp_model.IntVar] = {}
+            for s_idx, st in enumerate(staff_list):
+                v = model.NewIntVar(0, num_days, f'total_{s_idx}')
+                model.Add(v == sum(shifts[(s_idx, d)] for d in range(num_days)))
+                total_vars[st.name] = v
+            selected_names = [n for n in sorted(others_names) if n in total_vars]
+            selected = [total_vars[n] for n in selected_names]
+            if selected:
+                if others_total_bounds:
+                    L, U = others_total_bounds
+                    for name in selected_names:
+                        var = total_vars[name]
+                        cL = model.Add(var >= L)
+                        cU = model.Add(var <= U)
+                        try:
+                            self.constraint_tags[cL.Index()] = f"{name}の総回数の下限（{L}）"
+                            self.constraint_tags[cU.Index()] = f"{name}の総回数の上限（{U}）"
+                        except Exception:
+                            pass
+                if enforce_others_diff_leq1 and len(selected) > 1:
+                    min_v = model.NewIntVar(0, num_days, 'others_min_total')
+                    max_v = model.NewIntVar(0, num_days, 'others_max_total')
+                    model.AddMinEquality(min_v, selected)
+                    model.AddMaxEquality(max_v, selected)
+                    diff = model.NewIntVar(0, num_days, 'others_total_diff')
+                    model.Add(diff == max_v - min_v)
+                    cD = model.Add(diff <= 1)
+                    try:
+                        self.constraint_tags[cD.Index()] = "非問題スタッフの総回数差分≦1"
+                    except Exception:
+                        pass
+        # 段階1対策: 全体の総回数差分<=1をハード拘束（要求A）
+        if enforce_total_diff_all_leq1:
+            num_days = len(day_list)
+            all_totals = [model.NewIntVar(0, num_days, f'all_total_{s_idx}') for s_idx, _ in enumerate(staff_list)]
+            for s_idx in range(len(staff_list)):
+                model.Add(all_totals[s_idx] == sum(shifts[(s_idx, d)] for d in range(num_days)))
+            min_all = model.NewIntVar(0, num_days, 'all_min_total')
+            max_all = model.NewIntVar(0, num_days, 'all_max_total')
+            model.AddMinEquality(min_all, all_totals)
+            model.AddMaxEquality(max_all, all_totals)
+            diff_all = model.NewIntVar(0, num_days, 'all_total_diff')
+            model.Add(diff_all == max_all - min_all)
+            cA = model.Add(diff_all <= 1)
+            try:
+                self.constraint_tags[cA.Index()] = "全体の総回数差分≦1（段階1）"
+            except Exception:
+                pass
+        penalty_sum = self._sum_penalties(model, [fixed_penalty, minint_penalty])
+        # 既存: 分散ペナルティ
+        dispersion_penalty = 0
+        if disperse_duties and fairness_group:
+            dispersion_penalty = self._add_dispersion_penalty(
+                model, shifts, staff_list, day_list, fairness_group, past_schedules
+            )
+        # 目的関数
+        self._add_fairness_objective(
+            model, shifts, staff_list, day_list,
+            total_adjustments or {}, fairness_adjustments or {},
+            fairness_tolerance, fairness_group or set(),
+            penalty_sum, dispersion_penalty,
+            hard_fair_staff_names=fairness_hard_names,
+            soft_fair_staff_names=fairness_soft_names
+        )
+        solver = cp_model.CpSolver()
+        status = solver.Solve(model)
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            sol = self._create_solution_from_solver(solver, shifts, staff_list, day_list, fairness_group or set())
+            return sol
+        if status == cp_model.INFEASIBLE:
+            try:
+                return self._analyze_infeasibility(solver)
+            except Exception:
+                return "シフトが見つかりませんでした（制約の衝突）"
+        return "シフトが見つかりませんでした（未知の状態）"
+
+    def _manual_fixed_lookup(self, manual_fixed_shifts: dict | None) -> Set[Tuple[str, datetime.date]]:
+        result: Set[Tuple[str, datetime.date]] = set()
+        if not manual_fixed_shifts:
+            return result
+        try:
+            for d, lst in manual_fixed_shifts.items():
+                for st in lst:
+                    result.add((st.name, d))
+        except Exception:
+            pass
+        return result
+
+    def _add_min_interval_soft_penalties(self, model, shifts, staff_list, day_list,
+                                          orig_min_interval: int,
+                                          manual_fixed_lookup: Set[Tuple[str, datetime.date]]) -> cp_model.IntVar:
+        """元の min_interval に対する近接違反をペナルティ化。r が小さいほど重く。
+        月限定固定が両端のペアは免除。
+        戻り値は合計ペナルティ用の IntVar。
+        """
+        num_days = len(day_list)
+        penalty_lits: List[cp_model.IntVar] = []
+        if orig_min_interval <= 1:
+            zero = model.NewIntVar(0, 0, 'minint_penalty_zero')
+            model.Add(zero == 0)
+            return zero
+        # 重み（距離1を重く）
+        weights = {1: 100, 2: 60, 3: 40}
+        for s_idx, staff in enumerate(staff_list):
+            for d in range(num_days):
+                for r in range(1, orig_min_interval):
+                    k = d + r
+                    if k >= num_days:
+                        break
+                    d_date = day_list[d]['date']
+                    k_date = day_list[k]['date']
+                    if (staff.name, d_date) in manual_fixed_lookup and (staff.name, k_date) in manual_fixed_lookup:
+                        continue  # 月限定固定の連続は免除
+                    x_d = shifts[(s_idx, d)]
+                    x_k = shifts[(s_idx, k)]
+                    v = model.NewBoolVar(f'v_close_{s_idx}_{d}_{r}')
+                    model.Add(v <= x_d)
+                    model.Add(v <= x_k)
+                    model.Add(v >= x_d + x_k - 1)
+                    # 重みを掛けた分だけ複製しなくても総和に反映するための IntVar を使う
+                    # v は Bool のため、重み付きは以下のように表現する
+                    w = weights.get(r, 40)
+                    term = model.NewIntVar(0, w, f'v_close_w_{s_idx}_{d}_{r}')
+                    model.Add(term == v * w)
+                    penalty_lits.append(term)
+        if penalty_lits:
+            max_w = 100
+            try:
+                max_w = max(100, max([100, 60, 40]))
+            except Exception:
+                max_w = 100
+            ub = len(penalty_lits) * max_w
+            penalty_sum = model.NewIntVar(0, ub, 'minint_penalty')
+            model.Add(penalty_sum == sum(penalty_lits))
+            return penalty_sum
+        zero = model.NewIntVar(0, 0, 'minint_penalty_zero2')
+        model.Add(zero == 0)
+        return zero
+
+    def _sum_penalties(self, model, parts: List[int | cp_model.IntVar]) -> cp_model.IntVar:
+        vals = []
+        for p in parts:
+            if isinstance(p, int):
+                if p == 0:
+                    continue
+                c = model.NewIntVar(p, p, 'const_pen')
+                vals.append(c)
+            else:
+                vals.append(p)
+        if not vals:
+            z = model.NewIntVar(0, 0, 'zero_pen')
+            model.Add(z == 0)
+            return z
+        s = model.NewIntVar(0, 10_000_000, 'sum_pen')
+        model.Add(s == sum(vals))
+        return s
+
+    def _add_global_total_diff_leq1(self, model, shifts, staff_list, day_list):
+        num_days = len(day_list)
+        totals = [model.NewIntVar(0, num_days, f'gtotal_{s}') for s in range(len(staff_list))]
+        for s in range(len(staff_list)):
+            model.Add(totals[s] == sum(shifts[(s, d)] for d in range(num_days)))
+        min_v = model.NewIntVar(0, num_days, 'g_min_total')
+        max_v = model.NewIntVar(0, num_days, 'g_max_total')
+        model.AddMinEquality(min_v, totals)
+        model.AddMaxEquality(max_v, totals)
+        diff = model.NewIntVar(0, num_days, 'g_total_diff')
+        model.Add(diff == max_v - min_v)
+        c = model.Add(diff <= 1)
+        try:
+            self.constraint_tags[c.Index()] = "全体の総回数差分≦1（初回）"
+        except Exception:
+            pass
+
+    def _count_manual_fixed_by_staff(self, manual_fixed_shifts: dict | None) -> Dict[str, int]:
+        counts: Dict[str, int] = defaultdict(int)
+        if not manual_fixed_shifts:
+            return counts
+        try:
+            for _d, lst in manual_fixed_shifts.items():
+                for st in lst:
+                    counts[st.name] += 1
+        except Exception:
+            pass
+        return counts
+
+    def _build_stage2_diagnostic(self, *, tough_names: Set[str], fixed_counts: Dict[str, int], R_total: int,
+                                  others_names: Set[str], others_bounds: Tuple[int, int] | None,
+                                  max_consecutive_days: int,
+                                  manual_fixed_shifts: dict | None) -> str:
+        lines = []
+        lines.append("[診断レポート: 段階2]")
+        lines.append("")
+        lines.append("■ 問題スタッフ（tough）")
+        if tough_names:
+            for name in sorted(list(tough_names)):
+                lines.append(f"- {name}: 固定 {fixed_counts.get(name, 0)} 回")
+        else:
+            lines.append("- なし")
+        lines.append("")
+        lines.append(f"■ 総必要回数 R_total = {R_total}")
+        lines.append("")
+        lines.append("■ 非問題スタッフ（others）")
+        if others_names:
+            lines.append("- 対象: " + ", ".join(sorted(list(others_names))))
+            if others_bounds:
+                L, U = others_bounds
+                lines.append(f"- 回数レンジ拘束: {L}〜{U}")
+        else:
+            lines.append("- なし")
+        lines.append("")
+        # 固定が最大連勤を超えていないか簡易チェック
+        over_seq = []
+        try:
+            if manual_fixed_shifts:
+                per_staff_dates: Dict[str, List[datetime.date]] = defaultdict(list)
+                for d, lst in manual_fixed_shifts.items():
+                    for st in lst:
+                        per_staff_dates[st.name].append(d)
+                for name, dlist in per_staff_dates.items():
+                    dlist.sort()
+                    run = 1
+                    for i in range(1, len(dlist)):
+                        if (dlist[i] - dlist[i-1]).days == 1:
+                            run += 1
+                            if run > max_consecutive_days:
+                                over_seq.append((name, run))
+                                break
+                        else:
+                            run = 1
+        except Exception:
+            pass
+        lines.append("■ 固定と最大連勤の衝突")
+        if over_seq:
+            for name, run in over_seq:
+                lines.append(f"- {name}: 固定が連続 {run} 日で最大連勤を超過")
+        else:
+            lines.append("- なし（固定による上限超過は検出されず）")
+        return "\n".join(lines)
+
+    def _estimate_tough_staff_adjustments(self, shifts_per_day, fairness_group: set,
+                                          no_shift_dates, manual_vacations: dict | None,
+                                          rule_based_vacations: List[RuleBasedVacation] | None) -> Dict[str, int]:
+        """割当可能日が期待より著しく少ないスタッフを抽出し、その期待回数調整量（負値）を返す。"""
+        staff_list = self.all_staff
+        day_list = self.calendar_data
+        # 期待総必要数（minの総和）をからおおまかに算出
+        min_sum = 0
+        for day in day_list:
+            mn, _ = self._get_shift_range_for_day(day, shifts_per_day)
+            min_sum += mn
+        per_expected = max(0, round(min_sum / max(1, len(staff_list))))
+        # スタッフごとの利用可能日数
+        manual_vacations = manual_vacations or {}
+        rb_vac_map = self._generate_vacations_from_rules(rule_based_vacations, day_list[0]['date'].year, day_list[0]['date'].month)
+        tough: Dict[str, int] = {}
+        for st in staff_list:
+            avail = 0
+            for day in day_list:
+                date_obj = day['date']
+                if no_shift_dates and date_obj in no_shift_dates:
+                    continue
+                if st.name in manual_vacations and date_obj in manual_vacations[st.name]:
+                    continue
+                if date_obj in (rb_vac_map.get(st.name, set())):
+                    continue
+                # 不可曜日。ただし祝日免除設定（ignore_rules_on_holidays）は solve 呼び出し側で保持しているが、
+                # 本推定では厳しめに評価（祝日でも不可曜日は不可とみなす）
+                if day['weekday'] in st.impossible_weekdays:
+                    continue
+                avail += 1
+            deficit = per_expected - avail
+            if deficit > 0:
+                tough[st.name] = deficit
+        return tough
 
     def _define_variables(self, model, staff_list, day_list):
         shifts = {}
@@ -471,9 +991,11 @@ class ShiftScheduler:
 
         return penalty_literals, penalty_cost
     def _add_fairness_objective(self, model, shifts, staff_list, day_list,
-                                total_adjustments, fairness_adjustments,
-                                fairness_tolerance, fairness_group,
-                                fixed_shift_penalty, dispersion_penalty):
+                                 total_adjustments, fairness_adjustments,
+                                 fairness_tolerance, fairness_group,
+                                 fixed_shift_penalty, dispersion_penalty,
+                                 hard_fair_staff_names: Set[str] | None = None,
+                                 soft_fair_staff_names: Set[str] | None = None):
         num_staff = len(staff_list)
         num_days = len(day_list)
         fairness_penalty = model.NewIntVar(0, 1000000, 'fairness_penalty')
@@ -511,25 +1033,48 @@ class ShiftScheduler:
                         adj = fairness_adjustments.get(staff.name, 0) if fairness_adjustments else 0
                         model.Add(adj_fair[s_idx] == fair_shifts[s_idx] - adj)
 
-                    min_fair = model.NewIntVar(-num_days, num_days, 'min_fair')
-                    max_fair = model.NewIntVar(0, num_days, 'max_fair')
-                    model.AddMinEquality(min_fair, adj_fair)
-                    model.AddMaxEquality(max_fair, adj_fair)
-                    fair_diff = model.NewIntVar(0, num_days, 'fair_diff')
-                    model.Add(fair_diff == max_fair - min_fair)
-
-                    if self._fairness_as_hard:
-                        c2 = model.Add(fair_diff <= fairness_tolerance)
-                        try:
-                            self.constraint_tags[c2.Index()] = f"特別日回数の公平性 (許容差: {fairness_tolerance}回)"
-                        except Exception:
-                            pass
+                    # ハード評価対象の集合を決定（未指定時は従来どおり全員）
+                    if hard_fair_staff_names is None and soft_fair_staff_names is None:
+                        hard_indices = list(range(num_staff))
+                        hard_label = "特別日回数の公平性 (許容差: {}回)".format(fairness_tolerance)
+                        # 従来挙動
+                        min_fair = model.NewIntVar(-num_days, num_days, 'min_fair')
+                        max_fair = model.NewIntVar(0, num_days, 'max_fair')
+                        model.AddMinEquality(min_fair, adj_fair)
+                        model.AddMaxEquality(max_fair, adj_fair)
+                        fair_diff = model.NewIntVar(0, num_days, 'fair_diff')
+                        model.Add(fair_diff == max_fair - min_fair)
+                        if self._fairness_as_hard:
+                            c2 = model.Add(fair_diff <= fairness_tolerance)
+                            try:
+                                self.constraint_tags[c2.Index()] = hard_label
+                            except Exception:
+                                pass
+                        else:
+                            t = model.NewIntVar(-num_days, num_days, 'fair_over_tmp')
+                            model.Add(t == fair_diff - fairness_tolerance)
+                            over = model.NewIntVar(0, num_days, 'fair_over')
+                            model.AddMaxEquality(over, [t, 0])
+                            model.Add(fairness_penalty == over)
                     else:
-                        t = model.NewIntVar(-num_days, num_days, 'fair_over_tmp')
-                        model.Add(t == fair_diff - fairness_tolerance)
-                        over = model.NewIntVar(0, num_days, 'fair_over')
-                        model.AddMaxEquality(over, [t, 0])
-                        model.Add(fairness_penalty == over)
+                        # サブセット公平性: others をハード、tough はソフト（または無視）
+                        name_at = [st.name for st in staff_list]
+                        hard_indices = [i for i, nm in enumerate(name_at) if hard_fair_staff_names and nm in hard_fair_staff_names]
+                        # ハード側（others）の公平性
+                        if len(hard_indices) > 1 and self._fairness_as_hard:
+                            hard_vars = [adj_fair[i] for i in hard_indices]
+                            min_fair_h = model.NewIntVar(-num_days, num_days, 'min_fair_h')
+                            max_fair_h = model.NewIntVar(0, num_days, 'max_fair_h')
+                            model.AddMinEquality(min_fair_h, hard_vars)
+                            model.AddMaxEquality(max_fair_h, hard_vars)
+                            fair_diff_h = model.NewIntVar(0, num_days, 'fair_diff_h')
+                            model.Add(fair_diff_h == max_fair_h - min_fair_h)
+                            c2h = model.Add(fair_diff_h <= fairness_tolerance)
+                            try:
+                                self.constraint_tags[c2h.Index()] = f"特別日回数の公平性(othersのみ) (許容差: {fairness_tolerance}回)"
+                            except Exception:
+                                pass
+                        # tough 側は今回はペナルティ無し（将来必要なら over を合算）
 
             # 目的関数: 総回数差 + 既存ペナルティ（固定/分散）を最小化
             model.Minimize(total_diff + total_penalty)

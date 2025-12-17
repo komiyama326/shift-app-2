@@ -757,18 +757,19 @@ class GenerationTab(QWidget):
         layout.addLayout(button_box)
         for i in range(self.vacation_list.count()):
             item_text = self.vacation_list.item(i).text()
-            if item_text.startswith(f"{staff_name}:"):
-                dates_part = item_text.split(': ')[1]
-                for d_str in dates_part.split(', '):
-                    temp_list.addItem(d_str)
+            # 新形式: "YYYY-MM-DD: StaffName" を想定
+            if item_text.endswith(f": {staff_name}"):
+                try:
+                    date_str, _ = item_text.split(': ')
+                    y, m, d = [int(x) for x in date_str.split('-')]
+                    label = f"{d}日"
+                    temp_list.addItem(label)
                     # 既存休暇をハイライト
-                    try:
-                        day = int(d_str.replace('日',''))
-                        qd = QDate(year, month, day)
-                        fmt = QTextCharFormat(); fmt.setBackground(QColor('#FFD6E7')); fmt.setFontWeight(75)
-                        calendar_widget.setDateTextFormat(qd, fmt)
-                    except Exception:
-                        pass
+                    qd = QDate(y, m, d)
+                    fmt = QTextCharFormat(); fmt.setBackground(QColor('#FFD6E7')); fmt.setFontWeight(75)
+                    calendar_widget.setDateTextFormat(qd, fmt)
+                except Exception:
+                    pass
         selected_days = {int(temp_list.item(i).text().replace('日','')) for i in range(temp_list.count()) if temp_list.item(i).text().endswith('日')}
         def toggle_date_vac(qdate: QDate):
             nonlocal selected_days
@@ -809,14 +810,21 @@ class GenerationTab(QWidget):
         ok_button.clicked.connect(dialog.accept)
         cancel_button.clicked.connect(dialog.reject)
         if dialog.exec():
+            # 既存の当該スタッフの休暇行をすべて削除（新形式: "YYYY-MM-DD: Staff"）
             for i in range(self.vacation_list.count() - 1, -1, -1):
-                if self.vacation_list.item(i).text().startswith(f"{staff_name}:"):
+                if self.vacation_list.item(i).text().endswith(f": {staff_name}"):
                     self.vacation_list.takeItem(i)
+            # 選択した日を1行=1件で追加
             final_dates = [temp_list.item(i).text() for i in range(temp_list.count())]
-            if final_dates:
-                dates_str = ", ".join(final_dates)
-                item_text = f"{staff_name}: {dates_str}"
-                self.vacation_list.addItem(item_text)
+            for d_label in final_dates:
+                try:
+                    day = int(d_label.replace('日',''))
+                    date_str = f"{year:04d}-{month:02d}-{day:02d}"
+                    self.vacation_list.addItem(f"{date_str}: {staff_name}")
+                except Exception:
+                    pass
+            # 並びを日付でソート（任意）
+            self.vacation_list.sortItems()
 
     def _delete_manual_vacation(self):
         selected_items = self.vacation_list.selectedItems()
@@ -923,12 +931,12 @@ class GenerationTab(QWidget):
         month = self.month_combo.currentIndex() + 1
         for i in range(self.vacation_list.count()):
             item_text = self.vacation_list.item(i).text()
-            staff_name, dates_part = item_text.split(': ')
-            dates = []
-            for d_str in dates_part.split(', '):
-                day = int(d_str.replace('日', ''))
-                dates.append(datetime.date(year, month, day))
-            manual_vacations[staff_name] = dates
+            try:
+                date_str, staff_name = item_text.split(': ')
+                date_obj = datetime.date.fromisoformat(date_str)
+                manual_vacations.setdefault(staff_name, []).append(date_obj)
+            except Exception:
+                continue
         no_shift_dates = []
         for i in range(self.no_shift_list.count()):
             date_str = self.no_shift_list.item(i).text()
@@ -1006,6 +1014,15 @@ class GenerationTab(QWidget):
             msg = f"{len(solutions)}件のシフトパターンが見つかりました！"
             if note:
                 msg += f"\n\n注記: {note}"
+            # 緩和内容があれば表示
+            try:
+                relax = None
+                if isinstance(solutions, list) and solutions and isinstance(solutions[0], dict):
+                    relax = solutions[0].get('relaxations')
+                if relax:
+                    msg += "\n\n適用した緩和:\n" + "\n".join(relax)
+            except Exception:
+                pass
             QMessageBox.information(self, "成功", msg)
             self._update_solutions_table()
         else:
@@ -1022,6 +1039,13 @@ class GenerationTab(QWidget):
         if not active_staff_list: return
         for i, sol_data in enumerate(self.solutions):
             pattern_item = QTableWidgetItem(f"パターン {i+1}")
+            # 緩和履歴があればツールチップに表示
+            try:
+                relax = sol_data.get('relaxations') if isinstance(sol_data, dict) else None
+                if relax:
+                    pattern_item.setToolTip("\n".join(relax))
+            except Exception:
+                pass
             self.solutions_table.setItem(i, 0, pattern_item)
             counts_str_parts = []
             total_counts = sol_data["counts"]
@@ -1032,6 +1056,12 @@ class GenerationTab(QWidget):
                 counts_str_parts.append(f"{staff.name}: {total} / {fairness_val}")
             counts_str = ",  ".join(counts_str_parts)
             counts_item = QTableWidgetItem(counts_str)
+            try:
+                relax = sol_data.get('relaxations') if isinstance(sol_data, dict) else None
+                if relax:
+                    counts_item.setToolTip("\n".join(relax))
+            except Exception:
+                pass
             self.solutions_table.setItem(i, 1, counts_item)
         self.solutions_table.resizeRowsToContents()
 
@@ -1444,20 +1474,12 @@ class GenerationTab(QWidget):
         for i in range(self.vacation_list.count()):
             item_text = self.vacation_list.item(i).text()
             try:
-                name, dates_part = item_text.split(': ')
-            except ValueError:
+                date_str, staff_name = item_text.split(': ')
+                y, m, d = [int(x) for x in date_str.split('-')]
+                date_obj = datetime.date(y, m, d)
+                manual_vacations.setdefault(staff_name, set()).add(date_obj)
+            except Exception:
                 continue
-            days = set()
-            for d_str in dates_part.split(', '):
-                try:
-                    day_num = int(d_str.replace('日', ''))
-                    y = self.year_spinbox.value()
-                    m = self.month_combo.currentIndex() + 1
-                    days.add(datetime.date(y, m, day_num))
-                except Exception:
-                    continue
-            if days:
-                manual_vacations[name] = days
 
         manual_fixed_shifts = {}
         for i in range(self.fixed_shift_list.count()):
