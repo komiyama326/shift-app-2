@@ -46,7 +46,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; one-folder形式のビルド結果 (ShiftGenerator_onefolderフォルダ) の中身をすべてインストール先にコピーします
-Source: "C:\tools\shift-app\dist\ShiftGenerator_onefolder\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "C:\tools\shift-app 2\dist\ShiftGenerator_onefolder\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Registry]
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssocKey}"; ValueData: ""; Flags: uninsdeletevalue

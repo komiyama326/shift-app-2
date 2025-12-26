@@ -18,7 +18,6 @@ Thumbs.db
 
 # Build/packaging
 build/
-dist/
 *.egg-info/
 
 # Logs
